@@ -1,3 +1,4 @@
+
 // Global state
 const state = {
   selectedItems: [],
@@ -12,7 +13,8 @@ const state = {
     insightsPanel: null,
   },
   observers: [], // Track observers for cleanup
-  initialized: false
+  initialized: false,
+  isPanelVisible: false // Track panel visibility
 };
 
 // Improved initialization function with debounce
@@ -29,26 +31,25 @@ function initExtension() {
   // Extract repo information
   extractRepoInfo();
   
-  // Initialize UI components
-  createDownloadBar();
-  createInsightsPanel();
-  injectCheckboxes();
-  
-  // Show both panels by default (auto-injected as requested)
+  // Initialize UI components with staggered timing to prevent flickering
   setTimeout(() => {
-    showInsightsPanel();
-    updateDownloadBar();
-  }, 800);
+    createDownloadBar();
+    setTimeout(() => {
+      createInsightsPanel();
+      setTimeout(() => {
+        injectCheckboxes();
+        updateDownloadBar();
+        // Only show insights panel when requested
+        showToast('GitHub Downloader & Analyzer active', 'success');
+      }, 100);
+    }, 100);
+  }, 500);
   
   // Add event listeners (with cleanup capability)
-  const clickHandler = handleDocumentClick;
-  document.addEventListener('click', clickHandler);
+  document.addEventListener('click', handleDocumentClick);
   
   // Set up efficient page change detection
   observeDOMChanges();
-  
-  // Show toast notification when extension is ready
-  showToast('GitHub Downloader & Analyzer active', 'success');
 }
 
 // Improved GitHub repo page detection
@@ -91,7 +92,7 @@ function injectCheckboxes() {
     
     // Use template string for better performance
     const checkboxId = `gh-dl-${Math.random().toString(36).slice(2, 9)}`;
-    checkbox.innerHTML = `<input type="checkbox" id="${checkboxId}" /><label></label>`;
+    checkbox.innerHTML = `<input type="checkbox" id="${checkboxId}" /><label for="${checkboxId}"></label>`;
     
     // Get file info efficiently
     const fileElement = row.querySelector('.js-navigation-open');
@@ -172,7 +173,7 @@ function createDownloadBar() {
   
   // Use event delegation for better performance
   downloadBar.querySelector('.gh-download-btn').addEventListener('click', handleDownload);
-  downloadBar.querySelector('.gh-insights-btn').addEventListener('click', showInsightsPanel);
+  downloadBar.querySelector('.gh-insights-btn').addEventListener('click', toggleInsightsPanel);
   downloadBar.querySelector('.gh-export-btn').addEventListener('click', handleExportReadme);
   
   document.body.appendChild(downloadBar);
@@ -217,7 +218,7 @@ function downloadSingleFile(item) {
     return;
   }
   
-  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${pathSegment}`;
+  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${pathSegment}`;
   
   chrome.runtime.sendMessage({
     type: 'download',
@@ -239,6 +240,19 @@ function downloadMultipleItems() {
   setTimeout(() => {
     showToast('Multiple files download feature is being implemented');
   }, 1000);
+}
+
+// Toggle insights panel visibility
+function toggleInsightsPanel() {
+  const panel = state.uiElements.insightsPanel;
+  if (!panel) return;
+  
+  if (state.isPanelVisible) {
+    panel.classList.remove('gh-panel-visible');
+    state.isPanelVisible = false;
+  } else {
+    showInsightsPanel();
+  }
 }
 
 // Optimized insights panel creation
@@ -293,6 +307,7 @@ function createInsightsPanel() {
   // Add event listener
   panel.querySelector('.gh-insights-close').addEventListener('click', () => {
     panel.classList.remove('gh-panel-visible');
+    state.isPanelVisible = false;
   });
   
   document.body.appendChild(panel);
@@ -305,6 +320,7 @@ function showInsightsPanel() {
   if (!panel) return;
   
   panel.classList.add('gh-panel-visible');
+  state.isPanelVisible = true;
   loadRepositoryInsights();
 }
 
@@ -516,27 +532,11 @@ function observeDOMChanges() {
   }
   
   // Create a new optimized observer
-  const observer = new MutationObserver(mutations => {
-    let shouldReinitialize = false;
-    
-    // Check for significant DOM changes
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-        if (document.querySelector('.repository-content')) {
-          shouldReinitialize = true;
-          break;
-        }
-      }
-    }
-    
-    // Only reinitialize if needed
-    if (shouldReinitialize) {
-      console.log('GitHub Downloader & Analyzer: Page content changed');
-      
+  const observer = new MutationObserver(() => {
+    // Only reinitialize if needed and not too frequently
+    // Use a flag to prevent multiple rapid initializations
+    if (!state.initialized) {
       // Reset state for clean initialization
-      state.initialized = false;
-      
-      // Delay initialization to ensure DOM is ready
       setTimeout(initExtension, 300);
     }
   });
@@ -571,6 +571,7 @@ function checkForUrlChange() {
     // Reset state when URL changes
     state.initialized = false;
     state.selectedItems = [];
+    state.isPanelVisible = false;
     
     // Reinitialize after URL change
     setTimeout(initExtension, 300);
@@ -582,7 +583,7 @@ function initialize() {
   // Run initialization immediately
   initExtension();
   
-  // Set up URL change detection
+  // Set up URL change detection with a longer interval to save resources
   setInterval(checkForUrlChange, 1000);
 }
 
@@ -608,6 +609,7 @@ function cleanup() {
   // Reset state
   state.initialized = false;
   state.selectedItems = [];
+  state.isPanelVisible = false;
 }
 
 // Clear all resources on unload
