@@ -1,5 +1,5 @@
 
-/* GitHub Downloader & Analyzer styles */
+/* GitHub Downloader & Analyzer styles - optimized for performance */
 
 /* Checkboxes */
 .gh-downloader-checkbox {
@@ -20,13 +20,13 @@
 .gh-downloader-checkbox label {
   position: relative;
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border: 2px solid #768390;
   border-radius: 4px;
   background-color: transparent;
   cursor: pointer;
-  transition: all 0.2s ease-in-out;
+  transition: all 0.1s ease-in-out;
 }
 
 .gh-downloader-checkbox input:checked + label {
@@ -39,15 +39,11 @@
   position: absolute;
   left: 5px;
   top: 2px;
-  width: 5px;
-  height: 10px;
+  width: 4px;
+  height: 8px;
   border: solid white;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
-}
-
-.gh-downloader-checkbox label:hover {
-  border-color: #1f6feb;
 }
 
 /* Download Bar */
@@ -57,14 +53,14 @@
   bottom: 20px;
   display: flex;
   align-items: center;
-  padding: 8px 16px;
+  padding: 8px 12px;
   background-color: #0d1117;
   border: 1px solid #30363d;
   border-radius: 8px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
   z-index: 1000;
   transform: translateY(0);
-  opacity: 1;
+  opacity: 0.95;
   animation: slide-in 0.3s forwards;
 }
 
@@ -75,37 +71,33 @@
   }
   to {
     transform: translateY(0);
-    opacity: 1;
+    opacity: 0.95;
   }
 }
 
 .gh-downloader-count {
-  margin-right: 12px;
-  font-size: 14px;
+  margin-right: 10px;
+  font-size: 13px;
   color: #c9d1d9;
 }
 
 .gh-downloader-button {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
-  margin-left: 8px;
+  padding: 5px 10px;
+  margin-left: 6px;
   background-color: #238636;
   color: white;
   border: none;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
-.gh-downloader-button:hover {
-  background-color: #2ea043;
-}
-
 .gh-downloader-button svg {
-  margin-right: 6px;
+  margin-right: 5px;
 }
 
 .gh-download-btn {
@@ -138,15 +130,15 @@
   top: 0;
   right: 0;
   height: 100vh;
-  width: 380px;
+  width: 350px;
   background-color: #0d1117;
   border-left: 1px solid #30363d;
-  box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
   z-index: 1001;
-  transition: right 0.3s ease-in-out;
+  transition: right 0.25s ease-in-out;
   display: flex;
   flex-direction: column;
-  right: -400px; /* Start offscreen */
+  right: -360px; /* Start offscreen */
 }
 
 .gh-panel-visible {
@@ -157,33 +149,29 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
+  padding: 12px;
   border-bottom: 1px solid #30363d;
 }
 
 .gh-insights-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   color: #c9d1d9;
 }
 
 .gh-insights-close {
   background: none;
   border: none;
-  font-size: 18px;
+  font-size: 16px;
   color: #8b949e;
   cursor: pointer;
   padding: 4px 8px;
 }
 
-.gh-insights-close:hover {
-  color: #c9d1d9;
-}
-
 .gh-insights-content {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 12px;
 }
 
 .gh-insights-loading {
@@ -191,18 +179,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 200px;
+  height: 180px;
   color: #8b949e;
 }
 
 .gh-spinner {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   border: 3px solid rgba(139, 148, 158, 0.2);
   border-radius: 50%;
   border-top-color: #1f6feb;
-  animation: spin 1s linear infinite;
-  margin-bottom: 12px;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 10px;
 }
 
 @keyframes spin {
@@ -212,45 +200,45 @@
 }
 
 .gh-insights-error {
-  padding: 16px;
+  padding: 12px;
   color: #f85149;
   text-align: center;
 }
 
 .gh-insights-stat {
-  margin-bottom: 16px;
-  padding: 12px;
+  margin-bottom: 12px;
+  padding: 10px;
   background-color: #161b22;
   border: 1px solid #30363d;
   border-radius: 6px;
 }
 
 .gh-insights-label {
-  font-size: 14px;
+  font-size: 13px;
   color: #8b949e;
   margin-bottom: 4px;
 }
 
 .gh-insights-value {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: #c9d1d9;
 }
 
 .gh-insights-chart {
-  margin-top: 24px;
-  margin-bottom: 20px;
+  margin-top: 16px;
+  margin-bottom: 16px;
 }
 
 .gh-insights-chart h4 {
-  font-size: 16px;
+  font-size: 14px;
   color: #c9d1d9;
   margin-top: 0;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .gh-chart-placeholder {
-  height: 180px;
+  height: 160px;
   background-color: #161b22;
   border: 1px solid #30363d;
   border-radius: 6px;
@@ -258,7 +246,7 @@
   align-items: center;
   justify-content: center;
   color: #8b949e;
-  padding: 16px;
+  padding: 12px;
   text-align: center;
 }
 
@@ -275,7 +263,7 @@
   justify-content: center;
   visibility: hidden;
   opacity: 0;
-  transition: opacity 0.3s, visibility 0.3s;
+  transition: opacity 0.25s, visibility 0.25s;
 }
 
 .gh-modal-visible {
@@ -295,7 +283,7 @@
 
 .gh-export-modal-content {
   position: relative;
-  width: 360px;
+  width: 320px;
   background-color: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;
@@ -308,60 +296,56 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
+  padding: 12px;
   border-bottom: 1px solid #30363d;
 }
 
 .gh-export-modal-header h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   color: #c9d1d9;
 }
 
 .gh-export-modal-close {
   background: none;
   border: none;
-  font-size: 18px;
+  font-size: 16px;
   color: #8b949e;
   cursor: pointer;
   padding: 4px 8px;
 }
 
 .gh-export-modal-body {
-  padding: 16px;
+  padding: 14px;
 }
 
 .gh-export-modal-body p {
   margin-top: 0;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   color: #c9d1d9;
 }
 
 .gh-export-buttons {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-direction: column;
 }
 
 .gh-export-buttons button {
   display: flex;
   align-items: center;
-  padding: 12px;
+  padding: 10px;
   background-color: #21262d;
   color: #c9d1d9;
   border: 1px solid #30363d;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
-.gh-export-buttons button:hover {
-  background-color: #30363d;
-}
-
 .gh-export-buttons button svg {
-  margin-right: 12px;
+  margin-right: 10px;
 }
 
 .gh-export-btn-pdf {
@@ -378,16 +362,16 @@
   bottom: 80px;
   left: 50%;
   transform: translate(-50%, 100px);
-  padding: 10px 16px;
+  padding: 8px 14px;
   background-color: #0d1117;
   color: #c9d1d9;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: 13px;
   z-index: 1004;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+  transition: transform 0.25s ease-out, opacity 0.25s ease-out;
   opacity: 0;
-  border-left: 4px solid #1f6feb;
+  border-left: 3px solid #1f6feb;
 }
 
 .gh-toast-visible {
@@ -476,10 +460,6 @@
     background-color: #f6f8fa;
     border-color: #d0d7de;
     color: #24292f;
-  }
-
-  .gh-export-buttons button:hover {
-    background-color: #e7ebee;
   }
 
   .gh-toast {

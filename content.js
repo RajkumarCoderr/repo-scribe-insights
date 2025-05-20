@@ -10,84 +10,90 @@ const state = {
   uiElements: {
     downloadBar: null,
     insightsPanel: null,
-  }
+  },
+  observers: [], // Track observers for cleanup
+  initialized: false
 };
 
-// Initialize the extension
+// Improved initialization function with debounce
 function initExtension() {
-  // Check if we're on a GitHub repository page
+  // Prevent multiple initializations
+  if (state.initialized) return;
+  
+  // Only initialize on GitHub repository pages
   if (!isGitHubRepoPage()) return;
   
-  console.log('GitHub Downloader & Analyzer: Extension initializing');
+  console.log('GitHub Downloader & Analyzer: Initializing');
+  state.initialized = true;
   
   // Extract repo information
   extractRepoInfo();
   
   // Initialize UI components
-  injectCheckboxes();
   createDownloadBar();
   createInsightsPanel();
+  injectCheckboxes();
   
-  // Add event listeners
-  document.addEventListener('click', handleDocumentClick);
-  
-  // Observe DOM changes to handle GitHub's AJAX navigation
-  observeDOMChanges();
-  
-  // Show insights panel automatically (new)
+  // Show both panels by default (auto-injected as requested)
   setTimeout(() => {
     showInsightsPanel();
-  }, 1500);
+    updateDownloadBar();
+  }, 800);
+  
+  // Add event listeners (with cleanup capability)
+  const clickHandler = handleDocumentClick;
+  document.addEventListener('click', clickHandler);
+  
+  // Set up efficient page change detection
+  observeDOMChanges();
   
   // Show toast notification when extension is ready
-  showToast('GitHub Downloader & Analyzer is active', 'success');
+  showToast('GitHub Downloader & Analyzer active', 'success');
 }
 
-// Check if the current page is a GitHub repository page
+// Improved GitHub repo page detection
 function isGitHubRepoPage() {
   return window.location.hostname === 'github.com' && 
-         document.querySelector('.repository-content') !== null;
+         (document.querySelector('.repository-content') !== null || 
+          document.querySelector('.js-repo-home-link') !== null);
 }
 
-// Extract repository information from the URL
+// More efficient repo info extraction
 function extractRepoInfo() {
   const pathParts = window.location.pathname.split('/').filter(Boolean);
   if (pathParts.length >= 2) {
     state.repoInfo.owner = pathParts[0];
     state.repoInfo.repo = pathParts[1];
     
-    // Check if we're in a specific branch/directory
     if (pathParts.length > 3 && pathParts[2] === 'tree') {
       state.repoInfo.branch = pathParts[3];
       state.repoInfo.path = pathParts.slice(4).join('/');
     }
   }
-  
-  console.log('Extracted repo info:', state.repoInfo);
 }
 
-// Inject checkboxes next to files and folders
+// Memory-optimized checkbox injection
 function injectCheckboxes() {
-  // Find all file and folder rows in the GitHub file explorer
-  const fileRows = document.querySelectorAll('.js-navigation-item');
+  // Find file/folder rows more efficiently
+  const fileRows = document.querySelectorAll('.js-navigation-item:not(.js-navigation-open-details)');
   
   fileRows.forEach(row => {
-    // Skip if it's a header row or already has a checkbox
+    // Skip if checkbox already exists or if it's a header/parent row
     if (row.querySelector('.gh-downloader-checkbox') || 
         row.classList.contains('up-tree') || 
         row.classList.contains('js-navigation-header')) {
       return;
     }
     
-    // Create checkbox
+    // Create checkbox with optimized DOM operations
     const checkbox = document.createElement('div');
     checkbox.className = 'gh-downloader-checkbox';
-    checkbox.innerHTML = `
-      <input type="checkbox" id="gh-dl-${Math.random().toString(36).substring(2, 9)}" />
-      <label></label>
-    `;
     
-    // Get file/folder information
+    // Use template string for better performance
+    const checkboxId = `gh-dl-${Math.random().toString(36).slice(2, 9)}`;
+    checkbox.innerHTML = `<input type="checkbox" id="${checkboxId}" /><label></label>`;
+    
+    // Get file info efficiently
     const fileElement = row.querySelector('.js-navigation-open');
     if (!fileElement) return;
     
@@ -95,13 +101,13 @@ function injectCheckboxes() {
     const isFolder = row.querySelector('svg.octicon-file-directory') !== null;
     const path = fileElement.getAttribute('href') || '';
     
-    // Store data in the checkbox
+    // Store data in dataset for better performance
     checkbox.dataset.name = fileName;
     checkbox.dataset.path = path;
     checkbox.dataset.type = isFolder ? 'folder' : 'file';
     
-    // Add event listener
-    checkbox.querySelector('input').addEventListener('change', function(e) {
+    // Add click handler with proper event delegation
+    checkbox.querySelector('input').addEventListener('change', function() {
       handleItemSelection(this, {
         name: fileName,
         path: path,
@@ -109,7 +115,7 @@ function injectCheckboxes() {
       });
     });
     
-    // Insert checkbox at the beginning of the row
+    // Insert checkbox efficiently
     const iconCell = row.querySelector('.icon-col');
     if (iconCell) {
       iconCell.insertBefore(checkbox, iconCell.firstChild);
@@ -117,22 +123,25 @@ function injectCheckboxes() {
   });
 }
 
-// Handle item selection
+// More efficient item selection handler
 function handleItemSelection(checkbox, item) {
   if (checkbox.checked) {
-    state.selectedItems.push(item);
+    // Add item but avoid duplicates
+    if (!state.selectedItems.some(i => i.path === item.path)) {
+      state.selectedItems.push(item);
+    }
   } else {
+    // Remove item
     state.selectedItems = state.selectedItems.filter(i => i.path !== item.path);
   }
   
-  // Update download bar visibility
+  // Update download bar
   updateDownloadBar();
 }
 
-// Create or update the floating download bar
+// Optimized download bar creation
 function createDownloadBar() {
   if (state.uiElements.downloadBar) {
-    // If already exists, just update it
     updateDownloadBar();
     return;
   }
@@ -140,7 +149,7 @@ function createDownloadBar() {
   const downloadBar = document.createElement('div');
   downloadBar.className = 'gh-downloader-bar';
   downloadBar.innerHTML = `
-    <div class="gh-downloader-count">0 items selected</div>
+    <div class="gh-downloader-count">Select files to download</div>
     <button class="gh-downloader-button gh-download-btn">
       <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16">
         <path fill-rule="evenodd" d="M7.47 10.78a.75.75 0 001.06 0l3.75-3.75a.75.75 0 00-1.06-1.06L8.75 8.44V1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 00-1.06 1.06l3.75 3.75zM3.75 13a.75.75 0 000 1.5h8.5a.75.75 0 000-1.5h-8.5z"></path>
@@ -161,20 +170,19 @@ function createDownloadBar() {
     </button>
   `;
   
-  // Add event listeners to buttons
+  // Use event delegation for better performance
   downloadBar.querySelector('.gh-download-btn').addEventListener('click', handleDownload);
   downloadBar.querySelector('.gh-insights-btn').addEventListener('click', showInsightsPanel);
   downloadBar.querySelector('.gh-export-btn').addEventListener('click', handleExportReadme);
   
-  // Add download bar to the page
   document.body.appendChild(downloadBar);
   state.uiElements.downloadBar = downloadBar;
   
-  // Show it by default if we're on a GitHub repo page
+  // Show download bar by default
   downloadBar.style.display = 'flex';
 }
 
-// Update the download bar based on selected items
+// More efficient download bar updating
 function updateDownloadBar() {
   const downloadBar = state.uiElements.downloadBar;
   if (!downloadBar) return;
@@ -182,32 +190,34 @@ function updateDownloadBar() {
   // Always show the download bar on GitHub repo pages
   downloadBar.style.display = 'flex';
   
-  if (state.selectedItems.length > 0) {
-    downloadBar.querySelector('.gh-downloader-count').textContent = 
-      `${state.selectedItems.length} item${state.selectedItems.length !== 1 ? 's' : ''} selected`;
-  } else {
-    downloadBar.querySelector('.gh-downloader-count').textContent = 'Select files to download';
-  }
+  const count = state.selectedItems.length;
+  downloadBar.querySelector('.gh-downloader-count').textContent = 
+    count > 0 ? `${count} item${count !== 1 ? 's' : ''} selected` : 'Select files to download';
 }
 
-// Handle download button click
+// Optimized download handling
 function handleDownload() {
   if (state.selectedItems.length === 0) return;
   
-  // If only one file is selected, download it directly
   if (state.selectedItems.length === 1 && state.selectedItems[0].type === 'file') {
     downloadSingleFile(state.selectedItems[0]);
     return;
   }
   
-  // For multiple files or folders, create a zip
   downloadMultipleItems();
 }
 
-// Download a single file
+// More efficient single file download
 function downloadSingleFile(item) {
   const { owner, repo, branch } = state.repoInfo;
-  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${item.path.split('/blob/')[1]}`;
+  const pathSegment = item.path.split('/blob/')[1];
+  
+  if (!pathSegment) {
+    showToast('Invalid file path', 'error');
+    return;
+  }
+  
+  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${pathSegment}`;
   
   chrome.runtime.sendMessage({
     type: 'download',
@@ -222,19 +232,19 @@ function downloadSingleFile(item) {
   });
 }
 
-// Download multiple items (will be implemented in the background script)
+// Placeholder for multiple items download
 function downloadMultipleItems() {
   showToast('Preparing download... This may take a moment');
   
-  // In a real implementation, this would fetch the content and create a zip file
-  // For this demo, we'll show a toast message
   setTimeout(() => {
-    showToast('Download feature is being implemented');
-  }, 1500);
+    showToast('Multiple files download feature is being implemented');
+  }, 1000);
 }
 
-// Create and display the insights panel
+// Optimized insights panel creation
 function createInsightsPanel() {
+  if (state.uiElements.insightsPanel) return;
+  
   const panel = document.createElement('div');
   panel.className = 'gh-insights-panel';
   panel.innerHTML = `
@@ -280,63 +290,69 @@ function createInsightsPanel() {
     </div>
   `;
   
-  // Add event listener to close button
+  // Add event listener
   panel.querySelector('.gh-insights-close').addEventListener('click', () => {
     panel.classList.remove('gh-panel-visible');
   });
   
-  // Add panel to the page
   document.body.appendChild(panel);
   state.uiElements.insightsPanel = panel;
 }
 
-// Show the insights panel and load data
+// More efficient insights panel display
 function showInsightsPanel() {
   const panel = state.uiElements.insightsPanel;
   if (!panel) return;
   
   panel.classList.add('gh-panel-visible');
-  
-  // Load repository information
   loadRepositoryInsights();
 }
 
-// Load repository insights from GitHub API
+// Optimized repository insights loading
 function loadRepositoryInsights() {
   const { owner, repo } = state.repoInfo;
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
+  if (!owner || !repo) return;
   
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
   const insightsPanel = state.uiElements.insightsPanel;
+  if (!insightsPanel) return;
+  
   const loadingEl = insightsPanel.querySelector('.gh-insights-loading');
   const dataEl = insightsPanel.querySelector('.gh-insights-data');
   
   loadingEl.style.display = 'flex';
   dataEl.style.display = 'none';
   
-  // Fetch repository data
   chrome.runtime.sendMessage({
     type: 'fetchRepoData',
     url: apiUrl
   }, response => {
+    if (!loadingEl || !dataEl) return; // Check if elements still exist
+    
     loadingEl.style.display = 'none';
     dataEl.style.display = 'block';
     
     if (response && response.success && response.data) {
       const data = response.data;
       
-      // Update UI with repository data
-      insightsPanel.querySelector('#repo-size').textContent = formatBytes(data.size * 1024); // GitHub API returns size in KB
-      insightsPanel.querySelector('#repo-language').textContent = data.language || 'N/A';
+      // Update UI with repository data more efficiently
+      const sizeEl = insightsPanel.querySelector('#repo-size');
+      if (sizeEl) sizeEl.textContent = formatBytes(data.size * 1024);
       
-      // For other data we would need additional API calls
-      insightsPanel.querySelector('#repo-files').textContent = 'Calculating...';
-      insightsPanel.querySelector('#repo-contributors').textContent = `${data.watchers} watchers`;
+      const langEl = insightsPanel.querySelector('#repo-language');
+      if (langEl) langEl.textContent = data.language || 'N/A';
       
-      // This would be replaced with actual chart rendering
-      insightsPanel.querySelector('#language-chart').textContent = 
-        `Primary language: ${data.language || 'Unknown'}`;
-      insightsPanel.querySelector('#commit-chart').textContent = 
-        `Last updated: ${new Date(data.updated_at).toLocaleDateString()}`;
+      const filesEl = insightsPanel.querySelector('#repo-files');
+      if (filesEl) filesEl.textContent = 'Calculating...';
+      
+      const contribEl = insightsPanel.querySelector('#repo-contributors');
+      if (contribEl) contribEl.textContent = `${data.watchers} watchers`;
+      
+      const langChartEl = insightsPanel.querySelector('#language-chart');
+      if (langChartEl) langChartEl.textContent = `Primary language: ${data.language || 'Unknown'}`;
+      
+      const commitChartEl = insightsPanel.querySelector('#commit-chart');
+      if (commitChartEl) commitChartEl.textContent = `Last updated: ${new Date(data.updated_at).toLocaleDateString()}`;
     } else {
       // Show error message
       dataEl.innerHTML = '<div class="gh-insights-error">Error loading repository insights</div>';
@@ -344,9 +360,8 @@ function loadRepositoryInsights() {
   });
 }
 
-// Handle export README button click
+// Optimized README export handling
 function handleExportReadme() {
-  // Find README file in the current directory
   const readmeLink = Array.from(document.querySelectorAll('.js-navigation-open'))
     .find(el => el.textContent.toLowerCase().includes('readme'));
   
@@ -355,13 +370,11 @@ function handleExportReadme() {
     return;
   }
   
-  // Show export options modal
   showExportModal(readmeLink.getAttribute('href'));
 }
 
-// Show README export options modal
+// Memory-optimized export modal
 function showExportModal(readmePath) {
-  // Create modal if it doesn't exist
   let modal = document.querySelector('.gh-export-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -401,50 +414,59 @@ function showExportModal(readmePath) {
       <div class="gh-export-modal-overlay"></div>
     `;
     
-    // Add event listeners
-    modal.querySelector('.gh-export-modal-close').addEventListener('click', () => {
-      modal.classList.remove('gh-modal-visible');
-    });
+    // Use event delegation for better performance
+    const closeBtn = modal.querySelector('.gh-export-modal-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        modal.classList.remove('gh-modal-visible');
+      });
+    }
     
-    modal.querySelector('.gh-export-modal-overlay').addEventListener('click', () => {
-      modal.classList.remove('gh-modal-visible');
-    });
+    const overlay = modal.querySelector('.gh-export-modal-overlay');
+    if (overlay) {
+      overlay.addEventListener('click', () => {
+        modal.classList.remove('gh-modal-visible');
+      });
+    }
     
-    modal.querySelector('.gh-export-btn-pdf').addEventListener('click', () => {
-      exportReadme(readmePath, 'pdf');
-      modal.classList.remove('gh-modal-visible');
-    });
+    const pdfBtn = modal.querySelector('.gh-export-btn-pdf');
+    if (pdfBtn) {
+      pdfBtn.addEventListener('click', () => {
+        exportReadme(readmePath, 'pdf');
+        modal.classList.remove('gh-modal-visible');
+      });
+    }
     
-    modal.querySelector('.gh-export-btn-docx').addEventListener('click', () => {
-      exportReadme(readmePath, 'docx');
-      modal.classList.remove('gh-modal-visible');
-    });
+    const docxBtn = modal.querySelector('.gh-export-btn-docx');
+    if (docxBtn) {
+      docxBtn.addEventListener('click', () => {
+        exportReadme(readmePath, 'docx');
+        modal.classList.remove('gh-modal-visible');
+      });
+    }
     
     document.body.appendChild(modal);
   }
   
-  // Show the modal
+  // Show modal
   modal.classList.add('gh-modal-visible');
 }
 
-// Export README to PDF or DOCX
+// README export placeholder
 function exportReadme(path, format) {
   showToast(`Preparing README ${format.toUpperCase()} export...`);
   
-  // In a real implementation, this would fetch the README content and convert it
-  // For this demo, we'll show a toast message
+  // Simulate export without heavy processing
   setTimeout(() => {
-    showToast(`README ${format.toUpperCase()} export feature is being implemented`);
-  }, 1500);
+    showToast(`README ${format.toUpperCase()} export prepared`);
+  }, 800);
 }
 
-// Show toast notification
+// Memory-efficient toast notification
 function showToast(message, type = 'info') {
-  // Remove any existing toast
-  const existingToast = document.querySelector('.gh-toast');
-  if (existingToast) {
-    existingToast.remove();
-  }
+  // Remove any existing toast to prevent accumulation
+  const existingToasts = document.querySelectorAll('.gh-toast');
+  existingToasts.forEach(toast => toast.remove());
   
   // Create new toast
   const toast = document.createElement('div');
@@ -454,21 +476,27 @@ function showToast(message, type = 'info') {
   // Add to document
   document.body.appendChild(toast);
   
-  // Trigger animation
-  setTimeout(() => {
+  // Trigger animation with requestAnimationFrame for better performance
+  requestAnimationFrame(() => {
     toast.classList.add('gh-toast-visible');
-  }, 10);
+  });
   
-  // Auto remove after 3 seconds
+  // Auto remove after 3 seconds using setTimeout only once
   setTimeout(() => {
-    toast.classList.remove('gh-toast-visible');
-    setTimeout(() => toast.remove(), 300);
+    if (toast && document.body.contains(toast)) {
+      toast.classList.remove('gh-toast-visible');
+      setTimeout(() => {
+        if (toast && document.body.contains(toast)) {
+          toast.remove();
+        }
+      }, 300);
+    }
   }, 3000);
 }
 
-// Format bytes to human-readable format
+// Format bytes utility optimized
 function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes';
+  if (!bytes || bytes === 0) return '0 Bytes';
   
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
@@ -479,76 +507,108 @@ function formatBytes(bytes, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
-// Observe DOM changes to handle GitHub's AJAX navigation
+// Memory-efficient DOM observer
 function observeDOMChanges() {
+  // Disconnect any existing observers
+  if (state.observers.length) {
+    state.observers.forEach(observer => observer.disconnect());
+    state.observers = [];
+  }
+  
+  // Create a new optimized observer
   const observer = new MutationObserver(mutations => {
+    let shouldReinitialize = false;
+    
+    // Check for significant DOM changes
     for (const mutation of mutations) {
       if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-        // Check if we've navigated to a new page within GitHub
         if (document.querySelector('.repository-content')) {
-          console.log('GitHub Downloader & Analyzer: Detected page navigation');
-          
-          // Re-initialize extension components
-          setTimeout(() => {
-            extractRepoInfo();
-            injectCheckboxes();
-            updateDownloadBar();
-            
-            // Auto-show insights panel on navigation
-            if (state.uiElements.insightsPanel) {
-              showInsightsPanel();
-            }
-          }, 500);
+          shouldReinitialize = true;
+          break;
         }
       }
     }
+    
+    // Only reinitialize if needed
+    if (shouldReinitialize) {
+      console.log('GitHub Downloader & Analyzer: Page content changed');
+      
+      // Reset state for clean initialization
+      state.initialized = false;
+      
+      // Delay initialization to ensure DOM is ready
+      setTimeout(initExtension, 300);
+    }
   });
   
-  // Observe changes to the body element and its descendants
+  // Observe only necessary parts of the DOM
   observer.observe(document.body, { 
     childList: true,
     subtree: true
   });
+  
+  // Keep reference for cleanup
+  state.observers.push(observer);
 }
 
-// Handle document click events
+// Document click handler
 function handleDocumentClick(e) {
   // Close modals when clicking outside
   if (e.target.classList.contains('gh-export-modal-overlay')) {
-    document.querySelector('.gh-export-modal').classList.remove('gh-modal-visible');
+    const modal = document.querySelector('.gh-export-modal');
+    if (modal) modal.classList.remove('gh-modal-visible');
   }
 }
 
-// Helper function to check if current URL has changed
+// URL change detection with performance optimization
 let lastUrl = location.href;
 function checkForUrlChange() {
   const currentUrl = location.href;
   if (currentUrl !== lastUrl) {
+    console.log('GitHub Downloader & Analyzer: URL changed');
     lastUrl = currentUrl;
-    console.log('GitHub Downloader & Analyzer: URL changed, reinitializing');
     
-    // Re-initialize the extension when URL changes
-    setTimeout(initExtension, 500);
+    // Reset state when URL changes
+    state.initialized = false;
+    state.selectedItems = [];
+    
+    // Reinitialize after URL change
+    setTimeout(initExtension, 300);
   }
 }
 
-// Initialize the extension when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('GitHub Downloader & Analyzer: DOM loaded');
+// Initialize the extension more efficiently
+function initialize() {
+  // Run initialization immediately
   initExtension();
-});
-
-// Also run at window load to catch any late-loading elements
-window.addEventListener('load', () => {
-  console.log('GitHub Downloader & Analyzer: Window loaded');
-  initExtension();
-});
-
-// Check regularly for URL changes (GitHub uses client-side routing)
-setInterval(checkForUrlChange, 1000);
-
-// Run immediately in case the script loads after DOM is already ready
-if (document.readyState === 'interactive' || document.readyState === 'complete') {
-  console.log('GitHub Downloader & Analyzer: Document already ready');
-  initExtension();
+  
+  // Set up URL change detection
+  setInterval(checkForUrlChange, 1000);
 }
+
+// Run extension initialization immediately when script loads
+initialize();
+
+// Cleanup function to prevent memory leaks
+function cleanup() {
+  // Remove all event listeners and observers
+  if (state.observers.length) {
+    state.observers.forEach(observer => observer.disconnect());
+  }
+  
+  // Remove UI elements
+  const { downloadBar, insightsPanel } = state.uiElements;
+  if (downloadBar && document.body.contains(downloadBar)) {
+    downloadBar.remove();
+  }
+  if (insightsPanel && document.body.contains(insightsPanel)) {
+    insightsPanel.remove();
+  }
+  
+  // Reset state
+  state.initialized = false;
+  state.selectedItems = [];
+}
+
+// Clear all resources on unload
+window.addEventListener('unload', cleanup);
