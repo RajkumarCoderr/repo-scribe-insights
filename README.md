@@ -1,73 +1,75 @@
-# Welcome to your Lovable project
 
-## Project info
+# GitHub Downloader & Analyzer
 
-**URL**: https://lovable.dev/projects/de3d742c-1d38-4f72-a716-499ff6f41b09
+A Chrome extension that enhances GitHub with file/folder download capabilities and repository insights.
 
-## How can I edit this code?
+## Features
 
-There are several ways of editing your application.
+### 🔽 Download GitHub Files & Folders
+- Select files and folders with checkboxes
+- Download individual files or multiple selections as a zip
+- Intuitive UI with a floating action button
 
-**Use Lovable**
+### 📊 Repository Insights Panel
+- View repository statistics:
+  - Total repository size
+  - File and folder count
+  - Language breakdown
+  - Commit frequency analytics
+  - Top contributors list
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/de3d742c-1d38-4f72-a716-499ff6f41b09) and start prompting.
+### 📄 Export README Files
+- Export README files to different formats:
+  - PDF export with GitHub styling
+  - DOCX format for easy editing
 
-Changes made via Lovable will be committed automatically to this repo.
+### 🗃 Repository Size Display
+- See the total size of a repository
+- Breakdown of size by directory
 
-**Use your preferred IDE**
+### Additional Features
+- 🧭 Quick navigation sidebar
+- 🔍 Smart file preview
+- 🌐 Multi-language UI support
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+## Installation
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+1. Download this repository
+2. Open Chrome and navigate to `chrome://extensions`
+3. Enable "Developer mode" in the top-right corner
+4. Click "Load unpacked" and select the extension directory
+5. The extension icon should appear in your toolbar
 
-Follow these steps:
+## Usage
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+1. Navigate to any GitHub repository
+2. Use the checkboxes that appear next to files and folders to select them
+3. Click the floating "Download" button to download your selection
+4. Use the "Insights" button to view repository statistics
+5. Click "Export README" to save the README file in different formats
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## Privacy & Permissions
 
-# Step 3: Install the necessary dependencies.
-npm i
+This extension requires the following permissions:
+- `downloads`: To save files to your device
+- `scripting`: To modify GitHub pages with checkboxes and buttons
+- `storage`: To save your settings and preferences
+- `activeTab`: To interact with the current tab
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+It only activates on GitHub pages (`https://github.com/*`).
 
-**Edit a file directly in GitHub**
+## Development
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Structure
+- `manifest.json`: Extension configuration
+- `background.js`: Background service worker
+- `content.js`: Injects UI into GitHub pages
+- `popup.html/js/css`: Extension popup UI
+- `styles.css`: Styles for injected UI elements
+- `utils/`: Helper functions
 
-**Use GitHub Codespaces**
+### Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/de3d742c-1d38-4f72-a716-499ff6f41b09) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+## License
+This project is licensed under the MIT License - see the LICENSE file for details.
