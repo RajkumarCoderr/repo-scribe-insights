@@ -1,9 +1,9 @@
 
 {
   "manifest_version": 3,
-  "name": "GitHub Downloader & Analyzer",
+  "name": "GitHub Enhancer Pro",
   "version": "1.0.0",
-  "description": "Download files and folders from GitHub repositories, get repo insights, and export README files.",
+  "description": "Enhance GitHub with powerful analytics, insights, and productivity features directly in the UI.",
   "permissions": ["downloads", "storage", "activeTab"],
   "host_permissions": ["https://github.com/*", "https://api.github.com/*"],
   "icons": {
