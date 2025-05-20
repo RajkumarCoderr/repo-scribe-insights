@@ -1,4 +1,3 @@
-
 // Global state
 const state = {
   selectedItems: [],
@@ -19,6 +18,8 @@ function initExtension() {
   // Check if we're on a GitHub repository page
   if (!isGitHubRepoPage()) return;
   
+  console.log('GitHub Downloader & Analyzer: Extension initializing');
+  
   // Extract repo information
   extractRepoInfo();
   
@@ -32,6 +33,14 @@ function initExtension() {
   
   // Observe DOM changes to handle GitHub's AJAX navigation
   observeDOMChanges();
+  
+  // Show insights panel automatically (new)
+  setTimeout(() => {
+    showInsightsPanel();
+  }, 1500);
+  
+  // Show toast notification when extension is ready
+  showToast('GitHub Downloader & Analyzer is active', 'success');
 }
 
 // Check if the current page is a GitHub repository page
@@ -161,8 +170,8 @@ function createDownloadBar() {
   document.body.appendChild(downloadBar);
   state.uiElements.downloadBar = downloadBar;
   
-  // Initially hide it
-  downloadBar.style.display = 'none';
+  // Show it by default if we're on a GitHub repo page
+  downloadBar.style.display = 'flex';
 }
 
 // Update the download bar based on selected items
@@ -170,12 +179,14 @@ function updateDownloadBar() {
   const downloadBar = state.uiElements.downloadBar;
   if (!downloadBar) return;
   
+  // Always show the download bar on GitHub repo pages
+  downloadBar.style.display = 'flex';
+  
   if (state.selectedItems.length > 0) {
-    downloadBar.style.display = 'flex';
     downloadBar.querySelector('.gh-downloader-count').textContent = 
       `${state.selectedItems.length} item${state.selectedItems.length !== 1 ? 's' : ''} selected`;
   } else {
-    downloadBar.style.display = 'none';
+    downloadBar.querySelector('.gh-downloader-count').textContent = 'Select files to download';
   }
 }
 
@@ -471,16 +482,29 @@ function formatBytes(bytes, decimals = 2) {
 // Observe DOM changes to handle GitHub's AJAX navigation
 function observeDOMChanges() {
   const observer = new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-      if (mutation.type === 'childList' && 
-          mutation.addedNodes.length > 0 && 
-          document.querySelector('.js-navigation-item:not(.has-gh-downloader-checkbox)')) {
-        // GitHub's content has changed, reinitialize our elements
-        injectCheckboxes();
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+        // Check if we've navigated to a new page within GitHub
+        if (document.querySelector('.repository-content')) {
+          console.log('GitHub Downloader & Analyzer: Detected page navigation');
+          
+          // Re-initialize extension components
+          setTimeout(() => {
+            extractRepoInfo();
+            injectCheckboxes();
+            updateDownloadBar();
+            
+            // Auto-show insights panel on navigation
+            if (state.uiElements.insightsPanel) {
+              showInsightsPanel();
+            }
+          }, 500);
+        }
       }
-    });
+    }
   });
   
+  // Observe changes to the body element and its descendants
   observer.observe(document.body, { 
     childList: true,
     subtree: true
@@ -495,7 +519,36 @@ function handleDocumentClick(e) {
   }
 }
 
+// Helper function to check if current URL has changed
+let lastUrl = location.href;
+function checkForUrlChange() {
+  const currentUrl = location.href;
+  if (currentUrl !== lastUrl) {
+    lastUrl = currentUrl;
+    console.log('GitHub Downloader & Analyzer: URL changed, reinitializing');
+    
+    // Re-initialize the extension when URL changes
+    setTimeout(initExtension, 500);
+  }
+}
+
 // Initialize the extension when the page loads
-document.addEventListener('DOMContentLoaded', initExtension);
-// Also try to initialize after a short delay to handle dynamic content
-setTimeout(initExtension, 1000);
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('GitHub Downloader & Analyzer: DOM loaded');
+  initExtension();
+});
+
+// Also run at window load to catch any late-loading elements
+window.addEventListener('load', () => {
+  console.log('GitHub Downloader & Analyzer: Window loaded');
+  initExtension();
+});
+
+// Check regularly for URL changes (GitHub uses client-side routing)
+setInterval(checkForUrlChange, 1000);
+
+// Run immediately in case the script loads after DOM is already ready
+if (document.readyState === 'interactive' || document.readyState === 'complete') {
+  console.log('GitHub Downloader & Analyzer: Document already ready');
+  initExtension();
+}
