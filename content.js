@@ -1,117 +1,244 @@
 
-// GitHub Enhancer Pro - Content Script
-// Global state with efficient memory management
+/**
+ * GitHub Enhancer Pro - Content Script
+ * Injects UI enhancements directly into GitHub's interface
+ */
+
+// Configuration
+const CONFIG = {
+  apiBaseUrl: 'https://api.github.com',
+  rawContentUrl: 'https://raw.githubusercontent.com',
+  selectors: {
+    fileList: '.js-navigation-container .js-navigation-item',
+    fileNameCol: '.js-navigation-open',
+    readmeContainer: '#readme',
+    repoHeader: '.Layout-main .BorderGrid',
+    repoNavigation: '.file-navigation',
+  },
+  refreshInterval: 1000, // ms to wait for GitHub's UI to update after navigation
+};
+
+// Global state
 const state = {
-  sidebarVisible: true,
+  initialized: false,
   repoInfo: {
     owner: '',
     repo: '',
     branch: 'main',
     path: '',
   },
+  currentView: '',
   uiElements: {
     sidebar: null,
+    fileCheckboxes: new Map(),
+    selectedFiles: new Set(),
   },
-  observers: [],
-  initialized: false,
-  data: {
+  // Cache API responses to reduce requests
+  cache: {
+    fileData: new Map(),
     repoStats: null,
-    languages: null,
-    contributors: null,
-    fileStats: null,
   },
-  cache: {}, // In-memory cache to reduce API calls
 };
 
-// Initialize extension with performance optimizations
-function initExtension() {
+// Main initialization
+function init() {
+  // Initialize only once
   if (state.initialized) return;
+  
+  // Only initialize on GitHub repository pages
   if (!isGitHubRepoPage()) return;
-
-  console.log('GitHub Enhancer: Initializing');
+  
+  console.log('GitHub Enhancer: Initializing...');
+  
+  // Extract repository information
   extractRepoInfo();
-
-  // Use requestIdleCallback for non-critical initialization
-  window.requestIdleCallback(() => {
-    createSidebar();
-    setupEventListeners();
-    observeDOMChanges();
-    state.initialized = true;
-  });
+  
+  // Initialize UI elements
+  createSidebar();
+  observePageChanges();
+  
+  // Update file navigation when on file list view
+  if (isFileExplorerPage()) {
+    enhanceFileExplorer();
+  }
+  
+  // Mark as initialized
+  state.initialized = true;
+  console.log('GitHub Enhancer: Initialized successfully');
 }
 
-// More accurate GitHub repo page detection
+/**
+ * Check if current page is a GitHub repository page
+ */
 function isGitHubRepoPage() {
   const path = window.location.pathname.split('/').filter(Boolean);
   return window.location.hostname === 'github.com' && 
          path.length >= 2 && 
-         !['settings', 'marketplace', 'explore'].includes(path[0]) &&
-         document.querySelector('.repository-content, .js-repo-home-link');
+         !['settings', 'marketplace', 'explore', 'notifications'].includes(path[0]);
 }
 
-// Extract repo information efficiently
+/**
+ * Check if current page is a file explorer page
+ */
+function isFileExplorerPage() {
+  return document.querySelector(CONFIG.selectors.fileList) !== null;
+}
+
+/**
+ * Check if current page has a README
+ */
+function hasReadme() {
+  return document.querySelector(CONFIG.selectors.readmeContainer) !== null;
+}
+
+/**
+ * Extract repository information from URL
+ */
 function extractRepoInfo() {
   const pathParts = window.location.pathname.split('/').filter(Boolean);
+  
   if (pathParts.length >= 2) {
     state.repoInfo.owner = pathParts[0];
     state.repoInfo.repo = pathParts[1];
     
+    // Handle branches and file paths
     if (pathParts.length > 3 && pathParts[2] === 'tree') {
       state.repoInfo.branch = pathParts[3];
       state.repoInfo.path = pathParts.slice(4).join('/');
+    } else if (pathParts.length > 3 && pathParts[2] === 'blob') {
+      state.repoInfo.branch = pathParts[3];
+      state.repoInfo.path = pathParts.slice(4).join('/');
+    }
+    
+    // Determine current view
+    if (pathParts.length > 2) {
+      if (pathParts[2] === 'tree') {
+        state.currentView = 'file-explorer';
+      } else if (pathParts[2] === 'blob') {
+        state.currentView = 'file-view';
+      } else if (pathParts[2] === 'issues') {
+        state.currentView = 'issues';
+      } else if (pathParts[2] === 'pull') {
+        state.currentView = 'pull-requests';
+      } else {
+        state.currentView = 'other';
+      }
+    } else {
+      state.currentView = 'repo-root';
     }
   }
 }
 
-// Create the sidebar with lazy-loaded content
+/**
+ * Create and inject the sidebar
+ */
 function createSidebar() {
+  // Don't create sidebar if it already exists
   if (state.uiElements.sidebar) return;
-
-  // Create the sidebar container
+  
+  // Create sidebar container
   const sidebar = document.createElement('div');
   sidebar.className = 'gh-enhancer-sidebar';
+  sidebar.id = 'github-enhancer-sidebar';
+  
+  // Apply theme attributes from GitHub
   sidebar.setAttribute('data-color-mode', document.documentElement.getAttribute('data-color-mode') || 'auto');
   sidebar.setAttribute('data-theme', document.documentElement.getAttribute('data-theme') || '');
   
-  // Add toggle button
+  // Create toggle button
   const toggleButton = document.createElement('button');
   toggleButton.className = 'gh-enhancer-toggle';
-  toggleButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>';
+  toggleButton.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 12H5M12 19l-7-7 7-7"/>
+    </svg>
+  `;
+  toggleButton.setAttribute('aria-label', 'Toggle GitHub Enhancer sidebar');
   toggleButton.addEventListener('click', toggleSidebar);
   sidebar.appendChild(toggleButton);
 
-  // Create sidebar content
-  const content = document.createElement('div');
-  content.className = 'gh-enhancer-content';
+  // Create sidebar content container
+  const sidebarContent = document.createElement('div');
+  sidebarContent.className = 'gh-enhancer-content';
   
-  // Header section
-  const header = document.createElement('div');
-  header.className = 'gh-enhancer-header';
-  header.innerHTML = `
-    <h3>GitHub Enhancer</h3>
-    <div class="gh-enhancer-tabs">
-      <button class="gh-tab active" data-tab="overview">Overview</button>
-      <button class="gh-tab" data-tab="files">Files</button>
-      <button class="gh-tab" data-tab="contrib">Contributors</button>
-      <button class="gh-tab" data-tab="actions">Actions</button>
-    </div>
-  `;
-  content.appendChild(header);
-
-  // Tab contents
+  // Create header with tabs
+  const header = createSidebarHeader();
+  sidebarContent.appendChild(header);
+  
+  // Create tab contents container
   const tabContents = document.createElement('div');
   tabContents.className = 'gh-enhancer-tab-contents';
   
-  // Overview tab (shown by default)
-  const overviewTab = document.createElement('div');
-  overviewTab.className = 'gh-tab-content active';
-  overviewTab.setAttribute('data-tab', 'overview');
-  overviewTab.innerHTML = `
+  // Add the various tabs
+  tabContents.appendChild(createOverviewTab());
+  tabContents.appendChild(createFilesTab());
+  tabContents.appendChild(createReadmeTab());
+  tabContents.appendChild(createActionsTab());
+  
+  sidebarContent.appendChild(tabContents);
+  sidebar.appendChild(sidebarContent);
+  
+  // Add to page and store reference
+  document.body.appendChild(sidebar);
+  state.uiElements.sidebar = sidebar;
+  
+  // Start with overview tab selected
+  switchTab('overview');
+  
+  // Load data for the overview tab
+  loadRepoOverview();
+}
+
+/**
+ * Create the sidebar header with tabs
+ */
+function createSidebarHeader() {
+  const header = document.createElement('div');
+  header.className = 'gh-enhancer-header';
+  
+  const title = document.createElement('h3');
+  title.textContent = 'GitHub Enhancer';
+  header.appendChild(title);
+  
+  const tabs = document.createElement('div');
+  tabs.className = 'gh-enhancer-tabs';
+  
+  // Define tabs
+  const tabsData = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'files', label: 'Files' },
+    { id: 'readme', label: 'README' },
+    { id: 'actions', label: 'Actions' }
+  ];
+  
+  // Create tab buttons
+  tabsData.forEach((tab, index) => {
+    const button = document.createElement('button');
+    button.className = 'gh-tab' + (index === 0 ? ' active' : '');
+    button.setAttribute('data-tab', tab.id);
+    button.textContent = tab.label;
+    button.addEventListener('click', () => switchTab(tab.id));
+    tabs.appendChild(button);
+  });
+  
+  header.appendChild(tabs);
+  return header;
+}
+
+/**
+ * Create the Overview tab content
+ */
+function createOverviewTab() {
+  const tab = document.createElement('div');
+  tab.className = 'gh-tab-content';
+  tab.setAttribute('data-tab', 'overview');
+  
+  tab.innerHTML = `
     <div class="gh-enhancer-loading">
       <div class="gh-enhancer-spinner"></div>
-      <p>Loading repository info...</p>
+      <p>Loading repository information...</p>
     </div>
-    <div class="gh-enhancer-stats" style="display: none;">
+    <div class="gh-enhancer-overview" style="display: none;">
       <div class="gh-stat">
         <div class="gh-stat-label">Repository Size</div>
         <div class="gh-stat-value" id="repo-size">-</div>
@@ -124,290 +251,585 @@ function createSidebar() {
         <div class="gh-stat-label">Last Updated</div>
         <div class="gh-stat-value" id="repo-updated">-</div>
       </div>
-      <div class="gh-stat">
-        <div class="gh-stat-label">Stars & Forks</div>
-        <div class="gh-stat-value" id="repo-popularity">-</div>
-      </div>
       <div class="gh-chart">
         <h4>Language Breakdown</h4>
-        <div id="language-chart" class="gh-chart-placeholder"></div>
+        <div id="language-chart" class="gh-chart-container"></div>
       </div>
       <div class="gh-chart">
-        <h4>Commit Activity</h4>
-        <div id="commit-chart" class="gh-chart-placeholder"></div>
-      </div>
-    </div>
-  `;
-  tabContents.appendChild(overviewTab);
-
-  // Files tab
-  const filesTab = document.createElement('div');
-  filesTab.className = 'gh-tab-content';
-  filesTab.setAttribute('data-tab', 'files');
-  filesTab.innerHTML = `
-    <div class="gh-enhancer-loading">
-      <div class="gh-enhancer-spinner"></div>
-      <p>Analyzing files...</p>
-    </div>
-    <div class="gh-enhancer-file-stats" style="display: none;">
-      <div class="gh-stat">
-        <div class="gh-stat-label">Total Files</div>
-        <div class="gh-stat-value" id="total-files">-</div>
-      </div>
-      <div class="gh-stat">
-        <div class="gh-stat-label">Lines of Code</div>
-        <div class="gh-stat-value" id="total-loc">-</div>
-      </div>
-      <div class="gh-file-section">
-        <h4>Largest Files</h4>
-        <ul id="largest-files" class="gh-file-list"></ul>
-      </div>
-      <div class="gh-file-section">
         <h4>Tech Stack</h4>
         <div id="tech-stack" class="gh-tech-badges"></div>
       </div>
     </div>
   `;
-  tabContents.appendChild(filesTab);
+  
+  return tab;
+}
 
-  // Contributors tab
-  const contribTab = document.createElement('div');
-  contribTab.className = 'gh-tab-content';
-  contribTab.setAttribute('data-tab', 'contrib');
-  contribTab.innerHTML = `
-    <div class="gh-enhancer-loading">
-      <div class="gh-enhancer-spinner"></div>
-      <p>Loading contributor data...</p>
-    </div>
-    <div class="gh-enhancer-contrib-stats" style="display: none;">
-      <div class="gh-stat">
-        <div class="gh-stat-label">Total Contributors</div>
-        <div class="gh-stat-value" id="total-contributors">-</div>
+/**
+ * Create the Files tab content
+ */
+function createFilesTab() {
+  const tab = document.createElement('div');
+  tab.className = 'gh-tab-content';
+  tab.setAttribute('data-tab', 'files');
+  
+  tab.innerHTML = `
+    <div class="gh-file-manager">
+      <div class="gh-file-selection">
+        <div class="gh-selection-header">
+          <span id="selected-count">0 files selected</span>
+          <button id="download-selected" class="gh-action-btn" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            Download Selected
+          </button>
+        </div>
+        <div class="gh-selection-notice">
+          <p>Select files using checkboxes in the file list to download them.</p>
+        </div>
       </div>
-      <div class="gh-contrib-section">
-        <h4>Top Contributors</h4>
-        <ul id="top-contributors" class="gh-contributor-list"></ul>
+      <div class="gh-file-stats">
+        <div class="gh-stat">
+          <div class="gh-stat-label">Current Directory</div>
+          <div class="gh-stat-value" id="current-path">-</div>
+        </div>
+        <div class="gh-stat">
+          <div class="gh-stat-label">Files</div>
+          <div class="gh-stat-value" id="file-count">-</div>
+        </div>
+        <div class="gh-stat">
+          <div class="gh-stat-label">Total Size</div>
+          <div class="gh-stat-value" id="total-size">-</div>
+        </div>
       </div>
-      <div class="gh-chart">
-        <h4>Contribution Distribution</h4>
-        <div id="contrib-chart" class="gh-chart-placeholder"></div>
+      <div class="gh-file-section">
+        <h4>Largest Files</h4>
+        <ul id="largest-files" class="gh-file-list">
+          <li class="gh-loading-placeholder">Analyzing files...</li>
+        </ul>
       </div>
     </div>
   `;
-  tabContents.appendChild(contribTab);
+  
+  // Add event listener for download selected button
+  tab.querySelector('#download-selected').addEventListener('click', downloadSelectedFiles);
+  
+  return tab;
+}
 
-  // Actions tab
-  const actionsTab = document.createElement('div');
-  actionsTab.className = 'gh-tab-content';
-  actionsTab.setAttribute('data-tab', 'actions');
-  actionsTab.innerHTML = `
-    <div class="gh-enhancer-actions">
+/**
+ * Create the README tab content
+ */
+function createReadmeTab() {
+  const tab = document.createElement('div');
+  tab.className = 'gh-tab-content';
+  tab.setAttribute('data-tab', 'readme');
+  
+  tab.innerHTML = `
+    <div class="gh-readme-export">
+      <div class="gh-readme-header">
+        <h4>README.md Export</h4>
+        <p>Export the README file to various formats</p>
+      </div>
+      <div class="gh-export-options">
+        <button id="export-md" class="gh-export-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Markdown (.md)
+        </button>
+        <button id="export-txt" class="gh-export-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Text (.txt)
+        </button>
+        <button id="export-pdf" class="gh-export-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          PDF (.pdf)
+        </button>
+        <button id="export-docx" class="gh-export-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Word (.docx)
+        </button>
+      </div>
+      <div id="readme-preview" class="gh-readme-preview">
+        <div class="gh-loading-placeholder">Loading README preview...</div>
+      </div>
+    </div>
+  `;
+  
+  // Add event listeners for export buttons
+  tab.querySelector('#export-md').addEventListener('click', () => exportReadme('md'));
+  tab.querySelector('#export-txt').addEventListener('click', () => exportReadme('txt'));
+  tab.querySelector('#export-pdf').addEventListener('click', () => exportReadme('pdf'));
+  tab.querySelector('#export-docx').addEventListener('click', () => exportReadme('docx'));
+  
+  return tab;
+}
+
+/**
+ * Create the Actions tab content
+ */
+function createActionsTab() {
+  const tab = document.createElement('div');
+  tab.className = 'gh-tab-content';
+  tab.setAttribute('data-tab', 'actions');
+  
+  tab.innerHTML = `
+    <div class="gh-actions-panel">
       <div class="gh-action-group">
         <h4>Quick Actions</h4>
-        <button class="gh-action-btn" id="download-repo">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          Download ZIP
-        </button>
-        <button class="gh-action-btn" id="copy-clone-url">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <button id="clone-repo" class="gh-action-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
           Copy Clone URL
         </button>
-        <button class="gh-action-btn" id="open-codespace">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+        <button id="download-zip" class="gh-action-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Download ZIP
+        </button>
+        <button id="open-codespace" class="gh-action-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+          </svg>
           Open in Codespace
         </button>
       </div>
+      
       <div class="gh-action-group">
         <h4>External Tools</h4>
-        <button class="gh-action-btn" id="open-codesandbox">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+        <button id="open-codesandbox" class="gh-action-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          </svg>
           Open in CodeSandbox
         </button>
-        <button class="gh-action-btn" id="open-gitpod">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-          Open in Gitpod
+        <button id="open-gitpod" class="gh-action-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="3" y1="9" x2="21" y2="9"></line>
+            <line x1="3" y1="15" x2="21" y2="15"></line>
+            <line x1="9" y1="3" x2="9" y2="21"></line>
+            <line x1="15" y1="3" x2="15" y2="21"></line>
+          </svg>
+          Open in GitPod
         </button>
       </div>
     </div>
   `;
-  tabContents.appendChild(actionsTab);
   
-  content.appendChild(tabContents);
-  sidebar.appendChild(content);
-
-  // Add tab switching functionality
-  sidebar.querySelectorAll('.gh-tab').forEach(tab => {
-    tab.addEventListener('click', (e) => {
-      const tabName = e.currentTarget.getAttribute('data-tab');
-      switchTab(tabName);
-      
-      // Load tab data if needed
-      if (tabName === 'overview' && !state.data.repoStats) {
-        loadRepositoryData();
-      } else if (tabName === 'files' && !state.data.fileStats) {
-        loadFileStats();
-      } else if (tabName === 'contrib' && !state.data.contributors) {
-        loadContributorData();
-      }
-    });
-  });
-
-  // Add action buttons functionality
-  sidebar.querySelector('#download-repo')?.addEventListener('click', downloadRepo);
-  sidebar.querySelector('#copy-clone-url')?.addEventListener('click', copyCloneUrl);
-  sidebar.querySelector('#open-codespace')?.addEventListener('click', openInCodespace);
-  sidebar.querySelector('#open-codesandbox')?.addEventListener('click', openInCodeSandbox);
-  sidebar.querySelector('#open-gitpod')?.addEventListener('click', openInGitpod);
-
-  // Find github UI container (try multiple selectors for robustness)
-  const githubContainer = document.querySelector('main, .application-main');
+  // Add event listeners
+  tab.querySelector('#clone-repo').addEventListener('click', copyCloneUrl);
+  tab.querySelector('#download-zip').addEventListener('click', downloadZip);
+  tab.querySelector('#open-codespace').addEventListener('click', openInCodespace);
+  tab.querySelector('#open-codesandbox').addEventListener('click', openInCodeSandbox);
+  tab.querySelector('#open-gitpod').addEventListener('click', openInGitpod);
   
-  if (githubContainer) {
-    githubContainer.classList.add('with-gh-enhancer');
-    document.body.appendChild(sidebar);
-    state.uiElements.sidebar = sidebar;
-    
-    // Load initial data
-    loadRepositoryData();
-  }
+  return tab;
 }
 
-// Toggle sidebar visibility with animation
-function toggleSidebar() {
-  const sidebar = state.uiElements.sidebar;
-  if (!sidebar) return;
-  
-  state.sidebarVisible = !state.sidebarVisible;
-  
-  if (state.sidebarVisible) {
-    sidebar.classList.remove('collapsed');
-    document.querySelector('main, .application-main')?.classList.add('with-gh-enhancer');
-  } else {
-    sidebar.classList.add('collapsed');
-    document.querySelector('main, .application-main')?.classList.remove('with-gh-enhancer');
-  }
-}
-
-// Switch between tabs
-function switchTab(tabName) {
-  const sidebar = state.uiElements.sidebar;
-  if (!sidebar) return;
+/**
+ * Switch between tabs
+ */
+function switchTab(tabId) {
+  if (!state.uiElements.sidebar) return;
   
   // Update tab buttons
-  sidebar.querySelectorAll('.gh-tab').forEach(tab => {
-    if (tab.getAttribute('data-tab') === tabName) {
-      tab.classList.add('active');
+  const tabButtons = state.uiElements.sidebar.querySelectorAll('.gh-tab');
+  tabButtons.forEach(btn => {
+    if (btn.getAttribute('data-tab') === tabId) {
+      btn.classList.add('active');
     } else {
-      tab.classList.remove('active');
+      btn.classList.remove('active');
     }
   });
   
   // Update tab content
-  sidebar.querySelectorAll('.gh-tab-content').forEach(content => {
-    if (content.getAttribute('data-tab') === tabName) {
+  const tabContents = state.uiElements.sidebar.querySelectorAll('.gh-tab-content');
+  tabContents.forEach(content => {
+    if (content.getAttribute('data-tab') === tabId) {
       content.classList.add('active');
+      // Load data for specific tabs if needed
+      if (tabId === 'files' && isFileExplorerPage()) {
+        updateFileManager();
+      } else if (tabId === 'readme' && hasReadme()) {
+        loadReadmeContent();
+      }
     } else {
       content.classList.remove('active');
     }
   });
 }
 
-// Load repository data
-function loadRepositoryData() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  // Check cache first
-  const cacheKey = `repo:${owner}/${repo}`;
-  if (state.cache[cacheKey]) {
-    updateRepoStats(state.cache[cacheKey]);
-    return;
-  }
-  
-  const sidebar = state.uiElements.sidebar;
-  const loadingEl = sidebar?.querySelector('[data-tab="overview"] .gh-enhancer-loading');
-  const statsEl = sidebar?.querySelector('[data-tab="overview"] .gh-enhancer-stats');
-  
-  if (loadingEl) loadingEl.style.display = 'flex';
-  if (statsEl) statsEl.style.display = 'none';
-  
-  // Fetch repo data via background script
-  chrome.runtime.sendMessage({
-    type: 'fetchRepoData',
-    url: `https://api.github.com/repos/${owner}/${repo}`
-  }, response => {
-    if (response && response.success && response.data) {
-      // Cache the data
-      state.cache[cacheKey] = response.data;
-      state.data.repoStats = response.data;
-      
-      updateRepoStats(response.data);
-    } else {
-      showError('overview', 'Could not load repository data');
-    }
-  });
-  
-  // Also fetch languages
-  chrome.runtime.sendMessage({
-    type: 'fetchRepoData',
-    url: `https://api.github.com/repos/${owner}/${repo}/languages`
-  }, response => {
-    if (response && response.success && response.data) {
-      state.data.languages = response.data;
-      updateLanguageChart(response.data);
-    }
-  });
-}
-
-// Update repo stats in UI
-function updateRepoStats(data) {
+/**
+ * Toggle sidebar visibility
+ */
+function toggleSidebar() {
   const sidebar = state.uiElements.sidebar;
   if (!sidebar) return;
   
-  const loadingEl = sidebar.querySelector('[data-tab="overview"] .gh-enhancer-loading');
-  const statsEl = sidebar.querySelector('[data-tab="overview"] .gh-enhancer-stats');
+  sidebar.classList.toggle('collapsed');
   
-  if (loadingEl) loadingEl.style.display = 'none';
-  if (statsEl) statsEl.style.display = 'block';
+  // Save preference
+  chrome.storage.local.set({
+    sidebarCollapsed: sidebar.classList.contains('collapsed')
+  });
+}
+
+/**
+ * Enhance file explorer with file sizes and checkboxes
+ */
+function enhanceFileExplorer() {
+  // Clear previous state
+  state.uiElements.fileCheckboxes.clear();
+  state.uiElements.selectedFiles.clear();
   
-  // Update stats
-  const sizeEl = sidebar.querySelector('#repo-size');
-  if (sizeEl) sizeEl.textContent = formatBytes(data.size * 1024);
+  // Find all file and directory rows
+  const fileRows = document.querySelectorAll(CONFIG.selectors.fileList);
+  if (!fileRows.length) return;
   
-  const langEl = sidebar.querySelector('#repo-language');
-  if (langEl) langEl.textContent = data.language || 'N/A';
+  // Process each row
+  fileRows.forEach(row => {
+    // Skip if already processed
+    if (row.querySelector('.gh-enhancer-checkbox')) return;
+    
+    const fileLink = row.querySelector(CONFIG.selectors.fileNameCol);
+    if (!fileLink) return;
+    
+    const fileName = fileLink.textContent.trim();
+    const isDirectory = row.querySelector('[aria-label="Directory"]') !== null;
+    const path = fileLink.getAttribute('href')?.split('/').slice(5).join('/') || '';
+    
+    // Create checkbox
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'gh-enhancer-checkbox';
+    checkbox.setAttribute('data-path', path);
+    checkbox.setAttribute('data-name', fileName);
+    checkbox.setAttribute('data-type', isDirectory ? 'dir' : 'file');
+    
+    // Create size cell
+    const sizeCell = document.createElement('div');
+    sizeCell.className = 'gh-enhancer-size-cell';
+    sizeCell.innerHTML = '<span class="gh-enhancer-loading-size">...</span>';
+    
+    // Insert elements
+    const firstCell = row.firstChild;
+    if (firstCell) {
+      firstCell.prepend(checkbox);
+    }
+    
+    // Add size cell if it's a file row
+    if (!isDirectory) {
+      row.appendChild(sizeCell);
+      // Fetch and display file size
+      fetchFileSize(path).then(size => {
+        sizeCell.textContent = formatBytes(size);
+      });
+    } else {
+      sizeCell.textContent = '--';
+      row.appendChild(sizeCell);
+    }
+    
+    // Store reference and add change event
+    state.uiElements.fileCheckboxes.set(path, checkbox);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        state.uiElements.selectedFiles.add(path);
+      } else {
+        state.uiElements.selectedFiles.delete(path);
+      }
+      updateSelectionStatus();
+    });
+  });
   
-  const updatedEl = sidebar.querySelector('#repo-updated');
-  if (updatedEl) updatedEl.textContent = new Date(data.updated_at).toLocaleDateString();
+  // Add selection header before the file list
+  addSelectionHeaderToFileList();
   
-  const popularityEl = sidebar.querySelector('#repo-popularity');
-  if (popularityEl) popularityEl.textContent = `⭐ ${data.stargazers_count} · 🍴 ${data.forks_count}`;
+  // Update file manager in sidebar
+  updateFileManager();
+}
+
+/**
+ * Add selection header to file list in GitHub UI
+ */
+function addSelectionHeaderToFileList() {
+  // Skip if already added
+  if (document.querySelector('.gh-selection-header-main')) return;
   
-  // Simple placeholder for commit chart
-  const commitChartEl = sidebar.querySelector('#commit-chart');
-  if (commitChartEl) {
-    commitChartEl.innerHTML = `
-      <div class="gh-sparkline">
-        <div class="gh-sparkbar" style="height: 30%"></div>
-        <div class="gh-sparkbar" style="height: 50%"></div>
-        <div class="gh-sparkbar" style="height: 20%"></div>
-        <div class="gh-sparkbar" style="height: 80%"></div>
-        <div class="gh-sparkbar" style="height: 40%"></div>
-        <div class="gh-sparkbar" style="height: 60%"></div>
-        <div class="gh-sparkbar" style="height: 70%"></div>
-      </div>
-      <div class="gh-chart-label">Recent commit activity</div>
-    `;
+  // Find the table header
+  const fileListHeader = document.querySelector('.Box-header.position-sticky');
+  if (!fileListHeader) return;
+  
+  // Create selection header
+  const selectionHeader = document.createElement('div');
+  selectionHeader.className = 'gh-selection-header-main';
+  selectionHeader.innerHTML = `
+    <div class="gh-selection-count">0 files selected</div>
+    <div class="gh-selection-actions">
+      <button class="gh-selection-download-btn" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        Download Selected
+      </button>
+    </div>
+  `;
+  
+  // Add button event
+  selectionHeader.querySelector('.gh-selection-download-btn').addEventListener('click', downloadSelectedFiles);
+  
+  // Insert before file list
+  fileListHeader.parentNode.insertBefore(selectionHeader, fileListHeader);
+}
+
+/**
+ * Update selection status after checkbox changes
+ */
+function updateSelectionStatus() {
+  const count = state.uiElements.selectedFiles.size;
+  
+  // Update sidebar selection counter
+  const sidebarCounter = state.uiElements.sidebar?.querySelector('#selected-count');
+  if (sidebarCounter) {
+    sidebarCounter.textContent = `${count} ${count === 1 ? 'file' : 'files'} selected`;
+  }
+  
+  // Update sidebar download button
+  const sidebarDownloadBtn = state.uiElements.sidebar?.querySelector('#download-selected');
+  if (sidebarDownloadBtn) {
+    sidebarDownloadBtn.disabled = count === 0;
+  }
+  
+  // Update main UI selection counter
+  const mainCounter = document.querySelector('.gh-selection-count');
+  if (mainCounter) {
+    mainCounter.textContent = `${count} ${count === 1 ? 'file' : 'files'} selected`;
+  }
+  
+  // Update main UI download button
+  const mainDownloadBtn = document.querySelector('.gh-selection-download-btn');
+  if (mainDownloadBtn) {
+    mainDownloadBtn.disabled = count === 0;
   }
 }
 
-// Update language chart
+/**
+ * Update file manager in sidebar
+ */
+function updateFileManager() {
+  if (!state.uiElements.sidebar) return;
+  
+  // Update current path
+  const pathElement = state.uiElements.sidebar.querySelector('#current-path');
+  if (pathElement) {
+    pathElement.textContent = state.repoInfo.path || '/';
+  }
+  
+  // Count files and directories
+  const fileRows = document.querySelectorAll(CONFIG.selectors.fileList);
+  let fileCount = 0;
+  let totalSize = 0;
+  
+  fileRows.forEach(row => {
+    const isDirectory = row.querySelector('[aria-label="Directory"]') !== null;
+    if (!isDirectory) {
+      fileCount++;
+      // Try to get size from the file size cell we added
+      const sizeCell = row.querySelector('.gh-enhancer-size-cell');
+      if (sizeCell && !sizeCell.textContent.includes('...')) {
+        // Parse size from text like "1.2 KB"
+        const sizeText = sizeCell.textContent.trim();
+        totalSize += parseApproximateSize(sizeText);
+      }
+    }
+  });
+  
+  // Update file count
+  const fileCountElement = state.uiElements.sidebar.querySelector('#file-count');
+  if (fileCountElement) {
+    fileCountElement.textContent = fileCount.toString();
+  }
+  
+  // Update total size
+  const totalSizeElement = state.uiElements.sidebar.querySelector('#total-size');
+  if (totalSizeElement) {
+    totalSizeElement.textContent = formatBytes(totalSize);
+  }
+  
+  // Update largest files list
+  updateLargestFilesList();
+}
+
+/**
+ * Update the largest files list in the sidebar
+ */
+function updateLargestFilesList() {
+  if (!state.uiElements.sidebar) return;
+  
+  const largestFilesElement = state.uiElements.sidebar.querySelector('#largest-files');
+  if (!largestFilesElement) return;
+  
+  // Collect file sizes
+  const files = [];
+  document.querySelectorAll(CONFIG.selectors.fileList).forEach(row => {
+    const isDirectory = row.querySelector('[aria-label="Directory"]') !== null;
+    if (isDirectory) return;
+    
+    const fileLink = row.querySelector(CONFIG.selectors.fileNameCol);
+    const sizeCell = row.querySelector('.gh-enhancer-size-cell');
+    
+    if (fileLink && sizeCell && !sizeCell.textContent.includes('...')) {
+      const fileName = fileLink.textContent.trim();
+      const sizeText = sizeCell.textContent.trim();
+      const size = parseApproximateSize(sizeText);
+      
+      files.push({ name: fileName, size: size, sizeText: sizeText });
+    }
+  });
+  
+  // Sort by size (largest first)
+  files.sort((a, b) => b.size - a.size);
+  
+  // Update list
+  largestFilesElement.innerHTML = '';
+  
+  if (files.length === 0) {
+    largestFilesElement.innerHTML = '<li class="gh-loading-placeholder">No files to analyze</li>';
+    return;
+  }
+  
+  // Take top 5 files
+  files.slice(0, 5).forEach(file => {
+    const li = document.createElement('li');
+    li.className = 'gh-file-item';
+    li.innerHTML = `
+      <div class="gh-file-name">${file.name}</div>
+      <div class="gh-file-size">${file.sizeText}</div>
+    `;
+    largestFilesElement.appendChild(li);
+  });
+}
+
+/**
+ * Load repository overview data
+ */
+function loadRepoOverview() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) return;
+  
+  const sidebar = state.uiElements.sidebar;
+  if (!sidebar) return;
+  
+  // Show loading state
+  const loadingEl = sidebar.querySelector('[data-tab="overview"] .gh-enhancer-loading');
+  const overviewEl = sidebar.querySelector('[data-tab="overview"] .gh-enhancer-overview');
+  
+  if (loadingEl) loadingEl.style.display = 'flex';
+  if (overviewEl) overviewEl.style.display = 'none';
+  
+  // Fetch repo data
+  fetchRepoData().then(data => {
+    if (!data) {
+      showError('overview', 'Could not load repository data');
+      return;
+    }
+    
+    // Update overview
+    updateOverview(data);
+    
+    // Hide loading, show content
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (overviewEl) overviewEl.style.display = 'block';
+    
+    // Also fetch languages
+    fetchLanguages();
+  }).catch(err => {
+    console.error('GitHub Enhancer: Error loading repo data:', err);
+    showError('overview', 'Error loading repository data');
+  });
+  
+  // Detect tech stack
+  detectTechStack().then(stack => {
+    updateTechStack(stack);
+  });
+}
+
+/**
+ * Update overview tab with repo data
+ */
+function updateOverview(data) {
+  const sidebar = state.uiElements.sidebar;
+  if (!sidebar) return;
+  
+  // Update size
+  const sizeEl = sidebar.querySelector('#repo-size');
+  if (sizeEl && data.size) {
+    sizeEl.textContent = formatBytes(data.size * 1024); // GitHub API returns size in KB
+  }
+  
+  // Update language
+  const langEl = sidebar.querySelector('#repo-language');
+  if (langEl) {
+    langEl.textContent = data.language || 'Not specified';
+  }
+  
+  // Update last updated
+  const updatedEl = sidebar.querySelector('#repo-updated');
+  if (updatedEl && data.updated_at) {
+    const date = new Date(data.updated_at);
+    updatedEl.textContent = date.toLocaleDateString();
+  }
+}
+
+/**
+ * Update language chart
+ */
 function updateLanguageChart(languages) {
   const sidebar = state.uiElements.sidebar;
   if (!sidebar) return;
   
   const chartEl = sidebar.querySelector('#language-chart');
   if (!chartEl) return;
+  
+  // If no languages data
+  if (!languages || Object.keys(languages).length === 0) {
+    chartEl.innerHTML = '<div class="gh-chart-empty">No language data available</div>';
+    return;
+  }
   
   // Calculate percentages
   const total = Object.values(languages).reduce((sum, count) => sum + count, 0);
@@ -440,280 +862,293 @@ function updateLanguageChart(languages) {
   chartEl.innerHTML = chartHtml;
 }
 
-// Load file statistics
-function loadFileStats() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  const sidebar = state.uiElements.sidebar;
-  const loadingEl = sidebar?.querySelector('[data-tab="files"] .gh-enhancer-loading');
-  const statsEl = sidebar?.querySelector('[data-tab="files"] .gh-enhancer-file-stats');
-  
-  if (loadingEl) loadingEl.style.display = 'flex';
-  if (statsEl) statsEl.style.display = 'none';
-  
-  // Simulate file statistics until we implement full file traversal
-  setTimeout(() => {
-    const fileStats = {
-      totalFiles: Math.floor(Math.random() * 500) + 100,
-      totalLoc: Math.floor(Math.random() * 50000) + 5000,
-      largestFiles: [
-        { name: 'vendor.js', size: 1240000, path: 'dist/js/vendor.js' },
-        { name: 'main.css', size: 580000, path: 'dist/css/main.css' },
-        { name: 'app.bundle.js', size: 420000, path: 'dist/js/app.bundle.js' },
-        { name: 'data.json', size: 380000, path: 'src/data/data.json' },
-        { name: 'index.html', size: 120000, path: 'public/index.html' }
-      ],
-      techStack: detectTechStack()
-    };
-    
-    state.data.fileStats = fileStats;
-    updateFileStats(fileStats);
-  }, 500);
-}
-
-// Update file statistics in UI
-function updateFileStats(data) {
+/**
+ * Update tech stack badges
+ */
+function updateTechStack(stack) {
   const sidebar = state.uiElements.sidebar;
   if (!sidebar) return;
   
-  const loadingEl = sidebar.querySelector('[data-tab="files"] .gh-enhancer-loading');
-  const statsEl = sidebar.querySelector('[data-tab="files"] .gh-enhancer-file-stats');
-  
-  if (loadingEl) loadingEl.style.display = 'none';
-  if (statsEl) statsEl.style.display = 'block';
-  
-  // Update stats
-  const filesEl = sidebar.querySelector('#total-files');
-  if (filesEl) filesEl.textContent = data.totalFiles.toLocaleString();
-  
-  const locEl = sidebar.querySelector('#total-loc');
-  if (locEl) locEl.textContent = data.totalLoc.toLocaleString();
-  
-  // Update largest files list
-  const largestFilesEl = sidebar.querySelector('#largest-files');
-  if (largestFilesEl) {
-    largestFilesEl.innerHTML = '';
-    
-    data.largestFiles.forEach(file => {
-      const li = document.createElement('li');
-      li.className = 'gh-file-item';
-      li.innerHTML = `
-        <div class="gh-file-name">${file.name}</div>
-        <div class="gh-file-size">${formatBytes(file.size)}</div>
-      `;
-      largestFilesEl.appendChild(li);
-    });
-  }
-  
-  // Update tech stack
   const techStackEl = sidebar.querySelector('#tech-stack');
-  if (techStackEl && data.techStack) {
-    techStackEl.innerHTML = '';
-    
-    data.techStack.forEach(tech => {
-      const badge = document.createElement('span');
-      badge.className = 'gh-tech-badge';
-      badge.textContent = tech;
-      techStackEl.appendChild(badge);
-    });
-  }
-}
-
-// Detect tech stack based on files in repo
-function detectTechStack() {
-  // This is a simplified version - in practice you would check the actual files in the repo
-  const files = document.querySelectorAll('.js-navigation-open');
-  const fileNames = Array.from(files).map(el => el.textContent.trim());
+  if (!techStackEl) return;
   
-  const techStack = [];
-  
-  if (fileNames.some(name => name === 'package.json')) techStack.push('Node.js');
-  if (fileNames.some(name => name === 'yarn.lock')) techStack.push('Yarn');
-  if (fileNames.some(name => name === 'pnpm-lock.yaml')) techStack.push('pnpm');
-  if (fileNames.some(name => name.endsWith('.tsx'))) techStack.push('TypeScript');
-  if (fileNames.some(name => name === 'vite.config.js' || name === 'vite.config.ts')) techStack.push('Vite');
-  if (fileNames.some(name => name === 'webpack.config.js')) techStack.push('Webpack');
-  if (fileNames.some(name => name === 'tailwind.config.js' || name === 'tailwind.config.ts')) techStack.push('TailwindCSS');
-  if (fileNames.some(name => name.includes('next.config'))) techStack.push('Next.js');
-  if (fileNames.some(name => name.includes('svelte'))) techStack.push('Svelte');
-  if (fileNames.some(name => name.endsWith('.vue'))) techStack.push('Vue.js');
-  if (fileNames.some(name => name.includes('angular'))) techStack.push('Angular');
-  
-  // If no specific tech detected, check for common web tech
-  if (fileNames.some(name => name.endsWith('.js'))) techStack.push('JavaScript');
-  if (fileNames.some(name => name.endsWith('.html'))) techStack.push('HTML');
-  if (fileNames.some(name => name.endsWith('.css'))) techStack.push('CSS');
-  
-  return techStack;
-}
-
-// Load contributor data
-function loadContributorData() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  const sidebar = state.uiElements.sidebar;
-  const loadingEl = sidebar?.querySelector('[data-tab="contrib"] .gh-enhancer-loading');
-  const statsEl = sidebar?.querySelector('[data-tab="contrib"] .gh-enhancer-contrib-stats');
-  
-  if (loadingEl) loadingEl.style.display = 'flex';
-  if (statsEl) statsEl.style.display = 'none';
-  
-  // Check cache first
-  const cacheKey = `contributors:${owner}/${repo}`;
-  if (state.cache[cacheKey]) {
-    updateContributorStats(state.cache[cacheKey]);
+  if (!stack || stack.length === 0) {
+    techStackEl.innerHTML = '<div class="gh-chart-empty">No tech stack detected</div>';
     return;
   }
   
-  // Fetch contributor data
+  // Create badges
+  techStackEl.innerHTML = '';
+  stack.forEach(tech => {
+    const badge = document.createElement('span');
+    badge.className = 'gh-tech-badge';
+    badge.textContent = tech;
+    techStackEl.appendChild(badge);
+  });
+}
+
+/**
+ * Load README content for export
+ */
+function loadReadmeContent() {
+  const sidebar = state.uiElements.sidebar;
+  if (!sidebar) return;
+  
+  const previewEl = sidebar.querySelector('#readme-preview');
+  if (!previewEl) return;
+  
+  // Check if README exists
+  const readmeElement = document.querySelector(CONFIG.selectors.readmeContainer);
+  if (!readmeElement) {
+    previewEl.innerHTML = '<div class="gh-chart-empty">No README found in this repository</div>';
+    return;
+  }
+  
+  // Get README content
+  const readmeContent = readmeElement.querySelector('article');
+  if (!readmeContent) {
+    previewEl.innerHTML = '<div class="gh-chart-empty">Could not load README content</div>';
+    return;
+  }
+  
+  // Create a simplified preview
+  previewEl.innerHTML = '';
+  const preview = document.createElement('div');
+  preview.className = 'gh-readme-content';
+  preview.appendChild(readmeContent.cloneNode(true));
+  
+  // Remove any interactive elements
+  preview.querySelectorAll('button, input, select').forEach(el => el.remove());
+  
+  previewEl.appendChild(preview);
+}
+
+/**
+ * Export README to various formats
+ */
+function exportReadme(format) {
+  const { owner, repo, branch } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  // Get README raw URL
+  const readmeRawUrl = `${CONFIG.rawContentUrl}/${owner}/${repo}/${branch}/README.md`;
+  
+  // Fetch raw content
+  fetch(readmeRawUrl)
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('Failed to fetch README');
+      }
+      return response.text();
+    })
+    .then(content => {
+      switch (format) {
+        case 'md':
+          downloadText(content, `${repo}-README.md`);
+          showToast('README.md downloaded');
+          break;
+        case 'txt':
+          // Strip markdown syntax for plain text
+          const plainText = content
+            .replace(/(?:^|\n)#+\s+([^\n]*)/g, '\n\n$1\n') // headers
+            .replace(/(?:^|\n)[\*\-]\s+([^\n]*)/g, '\n• $1') // bullet points
+            .replace(/(?:\*\*|__)(.*?)(?:\*\*|__)/g, '$1') // bold
+            .replace(/(?:\*|_)(.*?)(?:\*|_)/g, '$1') // italic
+            .replace(/(?:^|\n)```[^\n]*\n[\s\S]*?\n```/g, '') // code blocks
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)') // links
+            .replace(/!\[([^\]]+)\]\(([^)]+)\)/g, '[Image: $1]'); // images
+            
+          downloadText(plainText, `${repo}-README.txt`);
+          showToast('README.txt downloaded');
+          break;
+        case 'pdf':
+          // For PDF we need to convert to HTML first
+          exportToPdf(content, `${repo}-README.pdf`);
+          break;
+        case 'docx':
+          // For DOCX we need to convert to HTML first
+          exportToDocx(content, `${repo}-README.docx`);
+          break;
+      }
+    })
+    .catch(error => {
+      console.error('GitHub Enhancer: Error exporting README:', error);
+      showToast('Failed to export README', 'error');
+    });
+}
+
+/**
+ * Export markdown to PDF using background script
+ */
+function exportToPdf(content, filename) {
+  // Request PDF conversion via background script
   chrome.runtime.sendMessage({
-    type: 'fetchRepoData',
-    url: `https://api.github.com/repos/${owner}/${repo}/contributors`
+    type: 'exportToPdf',
+    content: content,
+    filename: filename
   }, response => {
-    if (response && response.success && response.data) {
-      // Cache the data
-      state.cache[cacheKey] = response.data;
-      state.data.contributors = response.data;
-      
-      updateContributorStats(response.data);
+    if (response && response.success) {
+      showToast('PDF export started');
     } else {
-      showError('contrib', 'Could not load contributor data');
+      showToast('Failed to export as PDF', 'error');
     }
   });
 }
 
-// Update contributor statistics in UI
-function updateContributorStats(data) {
-  const sidebar = state.uiElements.sidebar;
-  if (!sidebar) return;
-  
-  const loadingEl = sidebar.querySelector('[data-tab="contrib"] .gh-enhancer-loading');
-  const statsEl = sidebar.querySelector('[data-tab="contrib"] .gh-enhancer-contrib-stats');
-  
-  if (loadingEl) loadingEl.style.display = 'none';
-  if (statsEl) statsEl.style.display = 'block';
-  
-  // Update total count
-  const totalEl = sidebar.querySelector('#total-contributors');
-  if (totalEl) totalEl.textContent = data.length.toString();
-  
-  // Update contributors list (top 5)
-  const contribListEl = sidebar.querySelector('#top-contributors');
-  if (contribListEl) {
-    contribListEl.innerHTML = '';
-    
-    const topContributors = data.slice(0, 5);
-    const totalContributions = topContributors.reduce((sum, c) => sum + c.contributions, 0);
-    
-    topContributors.forEach(contributor => {
-      const percentage = Math.round((contributor.contributions / totalContributions) * 100);
-      
-      const li = document.createElement('li');
-      li.className = 'gh-contributor-item';
-      li.innerHTML = `
-        <img src="${contributor.avatar_url}" alt="${contributor.login}" class="gh-contributor-avatar" />
-        <div class="gh-contributor-info">
-          <div class="gh-contributor-name">${contributor.login}</div>
-          <div class="gh-contributor-bar-wrap">
-            <div class="gh-contributor-bar" style="width: ${percentage}%"></div>
-          </div>
-          <div class="gh-contributor-count">${contributor.contributions} commits (${percentage}%)</div>
-        </div>
-      `;
-      contribListEl.appendChild(li);
-    });
-  }
-  
-  // Generate contribution chart
-  const chartEl = sidebar.querySelector('#contrib-chart');
-  if (chartEl && data.length > 0) {
-    const topFive = data.slice(0, 5);
-    const otherContributions = data.slice(5).reduce((sum, c) => sum + c.contributions, 0);
-    const totalContributions = topFive.reduce((sum, c) => sum + c.contributions, 0) + otherContributions;
-    
-    // Create simple donut chart
-    let segments = '';
-    let cumulativePercentage = 0;
-    let legend = '<div class="gh-chart-legend">';
-    
-    // Add top 5 contributors
-    const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'];
-    topFive.forEach((contributor, i) => {
-      const percentage = (contributor.contributions / totalContributions) * 100;
-      const startAngle = cumulativePercentage * 3.6; // 3.6 degrees per percentage point in a circle
-      const endAngle = (cumulativePercentage + percentage) * 3.6;
-      
-      segments += getDonutSegment(startAngle, endAngle, colors[i]);
-      
-      legend += `
-        <div class="gh-legend-item">
-          <span class="gh-legend-color" style="background-color: ${colors[i]}"></span>
-          <span class="gh-legend-name">${contributor.login}</span>
-          <span class="gh-legend-value">${Math.round(percentage)}%</span>
-        </div>
-      `;
-      
-      cumulativePercentage += percentage;
-    });
-    
-    // Add "Others" segment if there are more contributors
-    if (otherContributions > 0) {
-      const percentage = (otherContributions / totalContributions) * 100;
-      const startAngle = cumulativePercentage * 3.6;
-      const endAngle = 360;
-      
-      segments += getDonutSegment(startAngle, endAngle, '#aec7e8');
-      
-      legend += `
-        <div class="gh-legend-item">
-          <span class="gh-legend-color" style="background-color: #aec7e8"></span>
-          <span class="gh-legend-name">Others</span>
-          <span class="gh-legend-value">${Math.round(percentage)}%</span>
-        </div>
-      `;
+/**
+ * Export markdown to DOCX using background script
+ */
+function exportToDocx(content, filename) {
+  // Request DOCX conversion via background script
+  chrome.runtime.sendMessage({
+    type: 'exportToDocx',
+    content: content,
+    filename: filename
+  }, response => {
+    if (response && response.success) {
+      showToast('DOCX export started');
+    } else {
+      showToast('Failed to export as DOCX', 'error');
     }
-    
-    legend += '</div>';
-    
-    chartEl.innerHTML = `
-      <div class="gh-donut-chart">
-        <svg viewBox="0 0 100 100">
-          ${segments}
-          <circle cx="50" cy="50" r="25" fill="var(--color-canvas-default)" />
-        </svg>
-      </div>
-      ${legend}
-    `;
+  });
+}
+
+/**
+ * Download text content
+ */
+function downloadText(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  
+  chrome.runtime.sendMessage({
+    type: 'download',
+    url: url,
+    filename: filename
+  }, () => {
+    URL.revokeObjectURL(url); // Clean up
+  });
+}
+
+/**
+ * Download selected files as ZIP
+ */
+function downloadSelectedFiles() {
+  if (state.uiElements.selectedFiles.size === 0) {
+    showToast('No files selected', 'warning');
+    return;
   }
+  
+  const { owner, repo, branch } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  showToast('Preparing files for download...', 'info');
+  
+  // Request ZIP creation via background script
+  chrome.runtime.sendMessage({
+    type: 'createZip',
+    owner: owner,
+    repo: repo,
+    branch: branch,
+    paths: Array.from(state.uiElements.selectedFiles)
+  }, response => {
+    if (response && response.success) {
+      showToast('Download started');
+    } else {
+      showToast('Failed to create ZIP file', 'error');
+    }
+  });
 }
 
-// Generate donut chart segment
-function getDonutSegment(startAngle, endAngle, color) {
-  // Convert angles to radians
-  const startRad = (startAngle - 90) * Math.PI / 180;
-  const endRad = (endAngle - 90) * Math.PI / 180;
+/**
+ * Quick action: Copy clone URL
+ */
+function copyCloneUrl() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
   
-  // Calculate points
-  const x1 = 50 + 40 * Math.cos(startRad);
-  const y1 = 50 + 40 * Math.sin(startRad);
-  const x2 = 50 + 40 * Math.cos(endRad);
-  const y2 = 50 + 40 * Math.sin(endRad);
-  
-  // Create arc flag
-  const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
-  
-  // Create path
-  return `<path d="M 50 50 L ${x1} ${y1} A 40 40 0 ${largeArcFlag} 1 ${x2} ${y2} Z" fill="${color}" />`;
+  const url = `https://github.com/${owner}/${repo}.git`;
+  navigator.clipboard.writeText(url)
+    .then(() => showToast('Clone URL copied to clipboard'))
+    .catch(() => showToast('Failed to copy URL', 'error'));
 }
 
-// Show error message in tab
-function showError(tabName, message) {
+/**
+ * Quick action: Download ZIP
+ */
+function downloadZip() {
+  const { owner, repo, branch } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  const url = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch || 'main'}.zip`;
+  
+  chrome.runtime.sendMessage({
+    type: 'download',
+    url: url,
+    filename: `${repo}.zip`
+  });
+  
+  showToast('Download started');
+}
+
+/**
+ * Quick action: Open in Codespace
+ */
+function openInCodespace() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  window.open(`https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=${owner}%2F${repo}`, '_blank');
+}
+
+/**
+ * Quick action: Open in CodeSandbox
+ */
+function openInCodeSandbox() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  window.open(`https://codesandbox.io/s/github/${owner}/${repo}`, '_blank');
+}
+
+/**
+ * Quick action: Open in GitPod
+ */
+function openInGitpod() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) {
+    showToast('Repository information not available', 'error');
+    return;
+  }
+  
+  window.open(`https://gitpod.io/#https://github.com/${owner}/${repo}`, '_blank');
+}
+
+/**
+ * Show error message
+ */
+function showError(tabId, message) {
   const sidebar = state.uiElements.sidebar;
   if (!sidebar) return;
   
-  const loadingEl = sidebar.querySelector(`[data-tab="${tabName}"] .gh-enhancer-loading`);
+  const loadingEl = sidebar.querySelector(`[data-tab="${tabId}"] .gh-enhancer-loading`);
   if (loadingEl) {
     loadingEl.innerHTML = `
       <div class="gh-enhancer-error">
@@ -724,88 +1159,310 @@ function showError(tabName, message) {
   }
 }
 
-// Quick action handlers
-function downloadRepo() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  const downloadUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/master.zip`;
-  chrome.runtime.sendMessage({
-    type: 'download',
-    url: downloadUrl,
-    filename: `${repo}.zip`
-  });
-  
-  showToast('Download started');
-}
-
-function copyCloneUrl() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  const cloneUrl = `https://github.com/${owner}/${repo}.git`;
-  
-  navigator.clipboard.writeText(cloneUrl)
-    .then(() => showToast('Clone URL copied to clipboard'))
-    .catch(() => showToast('Failed to copy URL', 'error'));
-}
-
-function openInCodespace() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  window.open(`https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=${owner}%2F${repo}`, '_blank');
-}
-
-function openInCodeSandbox() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  window.open(`https://codesandbox.io/s/github/${owner}/${repo}`, '_blank');
-}
-
-function openInGitpod() {
-  const { owner, repo } = state.repoInfo;
-  if (!owner || !repo) return;
-  
-  window.open(`https://gitpod.io/#https://github.com/${owner}/${repo}`, '_blank');
-}
-
-// Show toast notification
+/**
+ * Show toast notification
+ */
 function showToast(message, type = 'info') {
-  // Remove any existing toast
-  document.querySelectorAll('.gh-enhancer-toast').forEach(el => el.remove());
+  // Remove existing toasts
+  document.querySelectorAll('.gh-enhancer-toast').forEach(t => t.remove());
   
+  // Create toast
   const toast = document.createElement('div');
   toast.className = `gh-enhancer-toast ${type}`;
   toast.textContent = message;
   
+  // Add to body
   document.body.appendChild(toast);
   
-  // Trigger animation
+  // Show with animation
   setTimeout(() => toast.classList.add('show'), 10);
   
-  // Auto-hide after 3 seconds
+  // Auto-hide
   setTimeout(() => {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
   }, 3000);
 }
 
-// Format bytes to human-readable size
+/**
+ * Observe page changes to update UI
+ */
+function observePageChanges() {
+  // Clean up existing observers
+  if (state.observers) {
+    state.observers.forEach(observer => observer.disconnect());
+  }
+  
+  state.observers = [];
+  
+  // Observe URL changes (for SPA navigation)
+  let lastUrl = window.location.href;
+  const urlObserver = new MutationObserver(() => {
+    if (lastUrl !== window.location.href) {
+      lastUrl = window.location.href;
+      onLocationChange();
+    }
+  });
+  
+  urlObserver.observe(document.body, { childList: true, subtree: true });
+  state.observers.push(urlObserver);
+  
+  // Observe theme changes
+  const themeObserver = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      if (mutation.attributeName === 'data-color-mode' || 
+          mutation.attributeName === 'data-theme') {
+        updateTheme();
+      }
+    }
+  });
+  
+  themeObserver.observe(document.documentElement, { attributes: true });
+  state.observers.push(themeObserver);
+}
+
+/**
+ * Handle location/URL changes
+ */
+function onLocationChange() {
+  console.log('GitHub Enhancer: Location changed');
+  
+  // Reset state for new page
+  extractRepoInfo();
+  
+  // Handle different page types
+  if (!isGitHubRepoPage()) {
+    if (state.uiElements.sidebar) {
+      state.uiElements.sidebar.classList.add('hidden');
+    }
+    return;
+  }
+  
+  // Show sidebar if it exists
+  if (state.uiElements.sidebar) {
+    state.uiElements.sidebar.classList.remove('hidden');
+    
+    // Reset to overview tab
+    switchTab('overview');
+    loadRepoOverview();
+  } else {
+    // Create sidebar if it doesn't exist
+    createSidebar();
+  }
+  
+  // Handle specific view types
+  setTimeout(() => {
+    if (isFileExplorerPage()) {
+      enhanceFileExplorer();
+    }
+  }, CONFIG.refreshInterval);
+}
+
+/**
+ * Update theme of extension to match GitHub's theme
+ */
+function updateTheme() {
+  const sidebar = state.uiElements.sidebar;
+  if (!sidebar) return;
+  
+  const colorMode = document.documentElement.getAttribute('data-color-mode') || 'auto';
+  const theme = document.documentElement.getAttribute('data-theme') || '';
+  
+  sidebar.setAttribute('data-color-mode', colorMode);
+  sidebar.setAttribute('data-theme', theme);
+}
+
+// API and data helpers
+
+/**
+ * Fetch repository data from GitHub API
+ */
+async function fetchRepoData() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) return null;
+  
+  // Check cache first
+  const cacheKey = `repo:${owner}/${repo}`;
+  if (state.cache.repoStats) return state.cache.repoStats;
+  
+  try {
+    // Request via background script to handle auth/rate limits
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'fetchRepoData',
+        url: `${CONFIG.apiBaseUrl}/repos/${owner}/${repo}`
+      }, response => {
+        if (response && response.success && response.data) {
+          // Cache the data
+          state.cache.repoStats = response.data;
+          resolve(response.data);
+        } else {
+          reject(new Error('Failed to fetch repo data'));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('GitHub Enhancer: Error fetching repo data:', error);
+    return null;
+  }
+}
+
+/**
+ * Fetch language data from GitHub API
+ */
+async function fetchLanguages() {
+  const { owner, repo } = state.repoInfo;
+  if (!owner || !repo) return;
+  
+  try {
+    // Request via background script
+    chrome.runtime.sendMessage({
+      type: 'fetchRepoData',
+      url: `${CONFIG.apiBaseUrl}/repos/${owner}/${repo}/languages`
+    }, response => {
+      if (response && response.success && response.data) {
+        updateLanguageChart(response.data);
+      }
+    });
+  } catch (error) {
+    console.error('GitHub Enhancer: Error fetching languages:', error);
+  }
+}
+
+/**
+ * Fetch file size from GitHub API
+ */
+async function fetchFileSize(filePath) {
+  const { owner, repo, branch } = state.repoInfo;
+  if (!owner || !repo || !filePath) return 0;
+  
+  // Check cache first
+  const cacheKey = `file:${owner}/${repo}/${branch}/${filePath}`;
+  if (state.cache.fileData.has(cacheKey)) {
+    return state.cache.fileData.get(cacheKey).size;
+  }
+  
+  try {
+    // Request via background script
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        type: 'fetchRepoData',
+        url: `${CONFIG.apiBaseUrl}/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`
+      }, response => {
+        if (response?.success && response?.data?.size) {
+          // Cache the data
+          state.cache.fileData.set(cacheKey, { size: response.data.size });
+          resolve(response.data.size);
+        } else {
+          resolve(0);
+        }
+      });
+    });
+  } catch (error) {
+    console.error('GitHub Enhancer: Error fetching file size:', error);
+    return 0;
+  }
+}
+
+/**
+ * Detect tech stack based on files and repo structure
+ */
+async function detectTechStack() {
+  // Start with empty tech stack
+  const techStack = new Set();
+  
+  // Check for package files
+  const fileNameMap = {};
+  document.querySelectorAll(CONFIG.selectors.fileNameCol).forEach(fileLink => {
+    const fileName = fileLink.textContent.trim();
+    fileNameMap[fileName.toLowerCase()] = true;
+  });
+  
+  // Common framework and library detection
+  if (fileNameMap['package.json']) techStack.add('Node.js');
+  if (fileNameMap['yarn.lock']) techStack.add('Yarn');
+  if (fileNameMap['pnpm-lock.yaml']) techStack.add('pnpm');
+  if (fileNameMap['webpack.config.js']) techStack.add('Webpack');
+  if (fileNameMap['vite.config.js'] || fileNameMap['vite.config.ts']) techStack.add('Vite');
+  if (fileNameMap['next.config.js'] || fileNameMap['next.config.ts']) techStack.add('Next.js');
+  if (fileNameMap['nuxt.config.js'] || fileNameMap['nuxt.config.ts']) techStack.add('Nuxt.js');
+  if (fileNameMap['angular.json']) techStack.add('Angular');
+  if (fileNameMap['tailwind.config.js'] || fileNameMap['tailwind.config.ts']) techStack.add('TailwindCSS');
+  if (fileNameMap['svelte.config.js']) techStack.add('Svelte');
+  if (fileNameMap['tsconfig.json']) techStack.add('TypeScript');
+  if (fileNameMap['.eslintrc.json'] || fileNameMap['.eslintrc.js']) techStack.add('ESLint');
+  if (fileNameMap['docker-compose.yml'] || fileNameMap['dockerfile']) techStack.add('Docker');
+  if (fileNameMap['go.mod']) techStack.add('Go');
+  if (fileNameMap['requirements.txt'] || fileNameMap['setup.py']) techStack.add('Python');
+  if (fileNameMap['.rspec']) techStack.add('Ruby');
+  if (fileNameMap['composer.json']) techStack.add('PHP');
+  
+  // Check file extensions for languages
+  const hasFileWithExt = (ext) => {
+    return Object.keys(fileNameMap).some(name => name.endsWith(ext));
+  };
+  
+  if (hasFileWithExt('.jsx') || hasFileWithExt('.tsx')) techStack.add('React');
+  if (hasFileWithExt('.vue')) techStack.add('Vue.js');
+  if (hasFileWithExt('.svelte')) techStack.add('Svelte');
+  if (hasFileWithExt('.go')) techStack.add('Go');
+  if (hasFileWithExt('.py')) techStack.add('Python');
+  if (hasFileWithExt('.rb')) techStack.add('Ruby');
+  if (hasFileWithExt('.php')) techStack.add('PHP');
+  if (hasFileWithExt('.java')) techStack.add('Java');
+  if (hasFileWithExt('.cs')) techStack.add('C#');
+  if (hasFileWithExt('.ts') && !techStack.has('TypeScript')) techStack.add('TypeScript');
+  if (hasFileWithExt('.js') && !techStack.has('Node.js')) techStack.add('JavaScript');
+  
+  return Array.from(techStack);
+}
+
+// Utility functions
+
+/**
+ * Format bytes to human-readable size
+ */
 function formatBytes(bytes, decimals = 2) {
   if (!bytes || bytes === 0) return '0 Bytes';
   
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
   
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
-// Get color for programming language
+/**
+ * Parse approximate size from string like "1.5 KB"
+ */
+function parseApproximateSize(sizeStr) {
+  try {
+    const parts = sizeStr.split(' ');
+    if (parts.length !== 2) return 0;
+    
+    const num = parseFloat(parts[0]);
+    const unit = parts[1].toUpperCase();
+    
+    const unitMultipliers = {
+      'BYTES': 1,
+      'B': 1,
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024,
+      'TB': 1024 * 1024 * 1024 * 1024
+    };
+    
+    return num * (unitMultipliers[unit] || 1);
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
+ * Get color for programming language
+ */
 function getLanguageColor(language) {
   const colors = {
     'JavaScript': '#f1e05a',
@@ -828,179 +1485,34 @@ function getLanguageColor(language) {
   return colors[language] || '#8257e5'; // Default purple for unknown languages
 }
 
-// Setup event listeners
-function setupEventListeners() {
-  // Listen for theme changes
-  const observer = new MutationObserver(mutations => {
-    for (const mutation of mutations) {
-      if (mutation.attributeName === 'data-color-mode' || mutation.attributeName === 'data-theme') {
-        updateTheme();
-      }
-    }
-  });
-  
-  observer.observe(document.documentElement, { attributes: true });
-  state.observers.push(observer);
-  
-  // Listen for messages from background script
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'themeChanged') {
-      updateTheme();
-    }
-    return true;
-  });
-}
+// Initialize extension when DOM is ready
+document.addEventListener('DOMContentLoaded', init);
 
-// Update theme of extension to match GitHub's theme
-function updateTheme() {
-  const sidebar = state.uiElements.sidebar;
-  if (!sidebar) return;
-  
-  const colorMode = document.documentElement.getAttribute('data-color-mode') || 'auto';
-  const theme = document.documentElement.getAttribute('data-theme') || '';
-  
-  sidebar.setAttribute('data-color-mode', colorMode);
-  sidebar.setAttribute('data-theme', theme);
-}
+// Re-initialize when page changes (for single-page apps)
+window.addEventListener('load', init);
 
-// Efficient DOM changes observation
-function observeDOMChanges() {
-  // Clean up any existing observers
-  if (state.observers.length) {
-    state.observers.forEach(observer => observer.disconnect());
-    state.observers = [];
+// Set up re-initialization check every second (for dynamic content)
+const initInterval = setInterval(() => {
+  if (isGitHubRepoPage() && !state.initialized) {
+    init();
   }
-  
-  // Watch for URL changes
-  let lastUrl = window.location.href;
-  const urlObserver = new MutationObserver(() => {
-    if (lastUrl !== window.location.href) {
-      lastUrl = window.location.href;
-      onLocationChange();
-    }
-  });
-  
-  urlObserver.observe(document.body, { childList: true, subtree: true });
-  state.observers.push(urlObserver);
-  
-  // Watch for relevant DOM changes (e.g., turbo navigation in GitHub)
-  const contentObserver = new MutationObserver(mutations => {
-    for (const mutation of mutations) {
-      if (mutation.target.classList && 
-          (mutation.target.classList.contains('repository-content') || 
-           mutation.target.querySelector('.repository-content'))) {
-        onRepoContentChange();
-        break;
-      }
-    }
-  });
-  
-  contentObserver.observe(document.body, { childList: true, subtree: true });
-  state.observers.push(contentObserver);
-}
+}, CONFIG.refreshInterval);
 
-// Handle location/URL changes
-function onLocationChange() {
-  console.log('GitHub Enhancer: Location changed');
+// Clean up resources on page unload
+window.addEventListener('beforeunload', () => {
+  clearInterval(initInterval);
   
-  if (!isGitHubRepoPage()) {
-    // We're not on a repo page, hide the sidebar
-    const sidebar = state.uiElements.sidebar;
-    if (sidebar) {
-      sidebar.classList.add('hidden');
-      document.querySelector('main, .application-main')?.classList.remove('with-gh-enhancer');
-    }
-    return;
-  }
-  
-  // Reset state for the new page
-  state.repoInfo = {
-    owner: '',
-    repo: '',
-    branch: 'main',
-    path: '',
-  };
-  state.data = {
-    repoStats: null,
-    languages: null,
-    contributors: null,
-    fileStats: null,
-  };
-  
-  // Update repo info and refresh
-  extractRepoInfo();
-  
-  // Show sidebar if it exists
-  const sidebar = state.uiElements.sidebar;
-  if (sidebar) {
-    sidebar.classList.remove('hidden');
-    if (state.sidebarVisible) {
-      document.querySelector('main, .application-main')?.classList.add('with-gh-enhancer');
-    }
-    
-    // Reset to overview tab
-    switchTab('overview');
-    loadRepositoryData();
-  } else {
-    // Create sidebar if it doesn't exist
-    createSidebar();
-  }
-}
-
-// Handle repo content changes (for SPA navigation)
-function onRepoContentChange() {
-  console.log('GitHub Enhancer: Repo content changed');
-  
-  // Only do actual refresh if repo info changed
-  const oldOwner = state.repoInfo.owner;
-  const oldRepo = state.repoInfo.repo;
-  
-  extractRepoInfo();
-  
-  if (oldOwner !== state.repoInfo.owner || oldRepo !== state.repoInfo.repo) {
-    // Repo changed, reload data
-    state.data = {
-      repoStats: null,
-      languages: null,
-      contributors: null,
-      fileStats: null,
-    };
-    
-    // Reset to overview tab
-    switchTab('overview');
-    loadRepositoryData();
-  }
-}
-
-// Cleanup function to prevent memory leaks
-function cleanup() {
-  // Remove all event listeners and observers
-  if (state.observers.length) {
+  // Clean up observers
+  if (state.observers) {
     state.observers.forEach(observer => observer.disconnect());
   }
   
   // Remove UI elements
-  const sidebar = state.uiElements.sidebar;
-  if (sidebar && document.body.contains(sidebar)) {
-    sidebar.remove();
+  if (state.uiElements.sidebar && document.body.contains(state.uiElements.sidebar)) {
+    state.uiElements.sidebar.remove();
   }
   
-  document.querySelector('main, .application-main')?.classList.remove('with-gh-enhancer');
-  
-  // Reset state
-  state.initialized = false;
-  state.data = {
-    repoStats: null,
-    languages: null,
-    contributors: null,
-    fileStats: null,
-  };
-}
-
-// Initialize the extension
-window.addEventListener('load', () => {
-  initExtension();
+  document.querySelectorAll('.gh-enhancer-toast, .gh-selection-header-main, .gh-enhancer-checkbox, .gh-enhancer-size-cell').forEach(el => {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  });
 });
-
-// Clear resources on unload
-window.addEventListener('unload', cleanup);

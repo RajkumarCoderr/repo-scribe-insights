@@ -3,9 +3,9 @@
   "manifest_version": 3,
   "name": "GitHub Enhancer Pro",
   "version": "1.0.0",
-  "description": "Enhance GitHub with powerful analytics, insights, and productivity features directly in the UI.",
+  "description": "Enhance GitHub with file-level insights, selective downloads, and README export features directly in the UI.",
   "permissions": ["downloads", "storage", "activeTab"],
-  "host_permissions": ["https://github.com/*", "https://api.github.com/*"],
+  "host_permissions": ["https://github.com/*", "https://api.github.com/*", "https://raw.githubusercontent.com/*"],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -27,12 +27,12 @@
       "matches": ["https://github.com/*"],
       "js": ["content.js"],
       "css": ["styles.css"],
-      "run_at": "document_end"
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*"],
+      "resources": ["icons/*", "libs/*"],
       "matches": ["https://github.com/*"]
     }
   ]

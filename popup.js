@@ -1,68 +1,76 @@
 
-document.addEventListener('DOMContentLoaded', function() {
-  // Check if we're on a GitHub page
-  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+/**
+ * GitHub Enhancer Pro - Popup Script
+ * Controls the popup UI and interacts with the content script
+ */
+
+// Elements
+const toggleSidebar = document.getElementById('toggle-sidebar');
+const optionsButton = document.getElementById('btn-options');
+const statusMessage = document.getElementById('status-message');
+
+// Check if we're on a GitHub page
+async function checkCurrentTab() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const currentTab = tabs[0];
-    const isGitHubRepo = currentTab.url && 
-      currentTab.url.startsWith('https://github.com/') && 
-      currentTab.url.split('/').length > 4;
     
-    updatePopupUI(isGitHubRepo, currentTab.url);
-  });
-  
-  // Theme toggle functionality
-  const themeToggle = document.getElementById('theme-toggle');
-  
-  // Load saved theme preference
-  chrome.storage.local.get('theme', function(data) {
-    const isDark = data.theme === 'dark';
-    themeToggle.checked = isDark;
-    document.body.classList.toggle('dark-theme', isDark);
-  });
-  
-  // Toggle theme when the switch is clicked
-  themeToggle.addEventListener('change', function() {
-    const isDark = this.checked;
-    document.body.classList.toggle('dark-theme', isDark);
+    if (currentTab && currentTab.url && currentTab.url.includes('github.com')) {
+      updateStatus(true, 'Active on GitHub');
+    } else {
+      updateStatus(false, 'Not on GitHub');
+    }
     
-    // Save preference
-    chrome.storage.local.set({ theme: isDark ? 'dark' : 'light' });
-    
-    // Send message to content script to update theme
-    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-      chrome.tabs.sendMessage(tabs[0].id, { action: 'updateTheme', theme: isDark ? 'dark' : 'light' });
+    // Load sidebar visibility preference
+    chrome.storage.local.get(['sidebarVisible'], function(result) {
+      toggleSidebar.checked = result.sidebarVisible !== false; // Default to true
     });
-  });
+  } catch (error) {
+    console.error('Error checking current tab:', error);
+  }
+}
+
+// Update status indicator
+function updateStatus(active, message) {
+  const indicator = statusMessage.querySelector('.status-indicator');
+  const text = statusMessage.querySelector('.status-text');
   
-  // Settings button click
-  document.getElementById('settings-btn').addEventListener('click', function() {
-    // In a real extension, this would open a settings page or modal
-    alert('Settings feature coming soon!');
+  if (active) {
+    indicator.classList.add('active');
+    indicator.classList.remove('inactive');
+  } else {
+    indicator.classList.remove('active');
+    indicator.classList.add('inactive');
+  }
+  
+  text.textContent = message;
+}
+
+// Handle sidebar toggle
+toggleSidebar.addEventListener('change', function() {
+  const isVisible = this.checked;
+  
+  // Save preference
+  chrome.storage.local.set({ sidebarVisible: isVisible });
+  
+  // Send message to content script
+  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+    if (tabs[0] && tabs[0].url && tabs[0].url.includes('github.com')) {
+      chrome.tabs.sendMessage(tabs[0].id, { 
+        type: 'toggleSidebar', 
+        visible: isVisible 
+      });
+    }
   });
 });
 
-// Update popup UI based on current tab
-function updatePopupUI(isGitHubRepo, url) {
-  const statusContainer = document.querySelector('.status-container');
-  const statusIcon = statusContainer.querySelector('.status-icon svg');
-  const statusMessage = statusContainer.querySelector('.status-message');
-  
-  if (isGitHubRepo) {
-    // Extract repo name
-    const urlParts = url.split('/');
-    const owner = urlParts[3];
-    const repo = urlParts[4];
-    
-    statusIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><path d="M12 16l4-4-4-4M8 12h8"></path>';
-    statusMessage.innerHTML = `Browsing: <strong>${owner}/${repo}</strong><br><span class="status-hint">Select files on the page to download</span>`;
-    statusContainer.classList.add('is-active');
-  } else if (url.includes('github.com')) {
-    statusIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line>';
-    statusMessage.textContent = 'Navigate to a GitHub repository to use this extension';
-    statusContainer.classList.remove('is-active');
-  } else {
-    statusIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="16"></line><line x1="8" y1="12" x2="16" y2="12"></line>';
-    statusMessage.textContent = 'This extension only works on GitHub repositories';
-    statusContainer.classList.remove('is-active');
-  }
-}
+// Handle options button
+optionsButton.addEventListener('click', function() {
+  // For now, just open GitHub in a new tab
+  chrome.tabs.create({ url: 'https://github.com' });
+});
+
+// Initialize popup
+document.addEventListener('DOMContentLoaded', function() {
+  checkCurrentTab();
+});
