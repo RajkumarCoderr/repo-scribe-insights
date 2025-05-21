@@ -9,13 +9,14 @@ const CONFIG = {
   apiBaseUrl: 'https://api.github.com',
   rawContentUrl: 'https://raw.githubusercontent.com',
   selectors: {
-    fileList: '.js-navigation-container .js-navigation-item',
+    fileList: '.Box-row.js-navigation-item',
     fileNameCol: '.js-navigation-open',
     readmeContainer: '#readme',
-    repoHeader: '.Layout-main .BorderGrid',
+    repoHeader: '.Layout-main',
     repoNavigation: '.file-navigation',
   },
-  refreshInterval: 1000, // ms to wait for GitHub's UI to update after navigation
+  refreshInterval: 500, // ms to wait for GitHub's UI to update after navigation
+  version: '1.0.0'
 };
 
 // Global state
@@ -32,6 +33,9 @@ const state = {
     sidebar: null,
     fileCheckboxes: new Map(),
     selectedFiles: new Set(),
+    toast: null,
+    collapsedState: false,
+    hiddenState: false
   },
   // Cache API responses to reduce requests
   cache: {
@@ -42,7 +46,7 @@ const state = {
 
 // Main initialization
 function init() {
-  // Initialize only once
+  // Don't initialize multiple times
   if (state.initialized) return;
   
   // Only initialize on GitHub repository pages
@@ -50,21 +54,50 @@ function init() {
   
   console.log('GitHub Enhancer: Initializing...');
   
-  // Extract repository information
-  extractRepoInfo();
-  
-  // Initialize UI elements
-  createSidebar();
-  observePageChanges();
-  
-  // Update file navigation when on file list view
-  if (isFileExplorerPage()) {
-    enhanceFileExplorer();
-  }
-  
-  // Mark as initialized
-  state.initialized = true;
-  console.log('GitHub Enhancer: Initialized successfully');
+  // Load saved preferences
+  loadUserPreferences().then(() => {
+    // Extract repository information
+    extractRepoInfo();
+    
+    // Initialize UI elements
+    createSidebar();
+    observePageChanges();
+    
+    // Update file navigation when on file list view
+    if (isFileExplorerPage()) {
+      enhanceFileExplorer();
+    }
+    
+    // Mark as initialized
+    state.initialized = true;
+    console.log('GitHub Enhancer: Initialized successfully');
+  });
+}
+
+/**
+ * Load user preferences from storage
+ */
+async function loadUserPreferences() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(
+      ['sidebarCollapsed', 'sidebarHidden'], 
+      (result) => {
+        state.uiElements.collapsedState = result.sidebarCollapsed || false;
+        state.uiElements.hiddenState = result.sidebarHidden || false;
+        resolve();
+      }
+    );
+  });
+}
+
+/**
+ * Save user preferences to storage
+ */
+function saveUserPreferences() {
+  chrome.storage.local.set({
+    sidebarCollapsed: state.uiElements.collapsedState,
+    sidebarHidden: state.uiElements.hiddenState
+  });
 }
 
 /**
@@ -74,7 +107,7 @@ function isGitHubRepoPage() {
   const path = window.location.pathname.split('/').filter(Boolean);
   return window.location.hostname === 'github.com' && 
          path.length >= 2 && 
-         !['settings', 'marketplace', 'explore', 'notifications'].includes(path[0]);
+         !['settings', 'marketplace', 'explore', 'notifications', 'account', 'login'].includes(path[0]);
 }
 
 /**
@@ -108,6 +141,12 @@ function extractRepoInfo() {
     } else if (pathParts.length > 3 && pathParts[2] === 'blob') {
       state.repoInfo.branch = pathParts[3];
       state.repoInfo.path = pathParts.slice(4).join('/');
+    } else {
+      // Default branch - try to get from page
+      const defaultBranchElement = document.querySelector('span.css-truncate-target[data-menu-button]');
+      if (defaultBranchElement) {
+        state.repoInfo.branch = defaultBranchElement.textContent.trim();
+      }
     }
     
     // Determine current view
@@ -133,27 +172,40 @@ function extractRepoInfo() {
  * Create and inject the sidebar
  */
 function createSidebar() {
-  // Don't create sidebar if it already exists
-  if (state.uiElements.sidebar) return;
+  // Remove existing sidebar if it exists
+  if (state.uiElements.sidebar) {
+    state.uiElements.sidebar.remove();
+    state.uiElements.sidebar = null;
+  }
   
   // Create sidebar container
   const sidebar = document.createElement('div');
   sidebar.className = 'gh-enhancer-sidebar';
   sidebar.id = 'github-enhancer-sidebar';
   
+  // Apply saved state
+  if (state.uiElements.collapsedState) {
+    sidebar.classList.add('collapsed');
+  }
+  
+  if (state.uiElements.hiddenState) {
+    sidebar.classList.add('hidden');
+  }
+  
   // Apply theme attributes from GitHub
-  sidebar.setAttribute('data-color-mode', document.documentElement.getAttribute('data-color-mode') || 'auto');
-  sidebar.setAttribute('data-theme', document.documentElement.getAttribute('data-theme') || '');
+  sidebar.setAttribute('data-color-mode', document.documentElement.getAttribute('data-color-mode') || document.body.getAttribute('data-color-mode') || 'auto');
+  sidebar.setAttribute('data-theme', document.documentElement.getAttribute('data-theme') || document.body.getAttribute('data-theme') || '');
   
   // Create toggle button
   const toggleButton = document.createElement('button');
   toggleButton.className = 'gh-enhancer-toggle';
+  toggleButton.setAttribute('aria-label', 'Toggle GitHub Enhancer sidebar');
   toggleButton.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 12H5M12 19l-7-7 7-7"/>
     </svg>
+    <span class="sr-only">Toggle sidebar</span>
   `;
-  toggleButton.setAttribute('aria-label', 'Toggle GitHub Enhancer sidebar');
   toggleButton.addEventListener('click', toggleSidebar);
   sidebar.appendChild(toggleButton);
 
@@ -187,6 +239,34 @@ function createSidebar() {
   
   // Load data for the overview tab
   loadRepoOverview();
+  
+  // Adjust the GitHub layout
+  adjustGitHubLayout();
+}
+
+/**
+ * Adjust GitHub layout to accommodate the sidebar
+ */
+function adjustGitHubLayout() {
+  const mainContent = document.querySelector('.Layout-main');
+  if (!mainContent) return;
+
+  // Reset any existing styles
+  mainContent.style.width = '';
+  
+  // Apply transition for smooth resizing
+  mainContent.style.transition = 'width 0.2s ease-out';
+  
+  // Adjust width based on sidebar state
+  if (state.uiElements.sidebar) {
+    if (state.uiElements.hiddenState) {
+      mainContent.style.width = '100%';
+    } else if (state.uiElements.collapsedState) {
+      mainContent.style.width = `calc(100% - var(--gh-enhancer-collapsed-width))`;
+    } else {
+      mainContent.style.width = `calc(100% - var(--gh-enhancer-width))`;
+    }
+  }
 }
 
 /**
@@ -198,6 +278,14 @@ function createSidebarHeader() {
   
   const title = document.createElement('h3');
   title.textContent = 'GitHub Enhancer';
+  
+  const version = document.createElement('span');
+  version.textContent = ` v${CONFIG.version}`;
+  version.style.fontSize = '12px';
+  version.style.color = 'var(--gh-enhancer-muted-color)';
+  version.style.fontWeight = 'normal';
+  title.appendChild(version);
+  
   header.appendChild(title);
   
   const tabs = document.createElement('div');
@@ -428,6 +516,19 @@ function createActionsTab() {
       </div>
       
       <div class="gh-action-group">
+        <h4>Extension Options</h4>
+        <div class="gh-stat">
+          <div class="gh-stat-label">Show Sidebar</div>
+          <div class="gh-stat-value">
+            <label class="gh-enhancer-switch">
+              <input type="checkbox" id="toggle-sidebar">
+              <span class="gh-enhancer-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="gh-action-group">
         <h4>External Tools</h4>
         <button id="open-codesandbox" class="gh-action-btn">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -456,6 +557,25 @@ function createActionsTab() {
   tab.querySelector('#open-codesandbox').addEventListener('click', openInCodeSandbox);
   tab.querySelector('#open-gitpod').addEventListener('click', openInGitpod);
   
+  // Add sidebar visibility toggle
+  const sidebarToggle = tab.querySelector('#toggle-sidebar');
+  sidebarToggle.checked = !state.uiElements.hiddenState;
+  sidebarToggle.addEventListener('change', () => {
+    state.uiElements.hiddenState = !sidebarToggle.checked;
+    saveUserPreferences();
+    
+    if (state.uiElements.sidebar) {
+      if (state.uiElements.hiddenState) {
+        state.uiElements.sidebar.classList.add('hidden');
+      } else {
+        state.uiElements.sidebar.classList.remove('hidden');
+      }
+    }
+    
+    // Adjust main content width
+    adjustGitHubLayout();
+  });
+  
   return tab;
 }
 
@@ -470,8 +590,10 @@ function switchTab(tabId) {
   tabButtons.forEach(btn => {
     if (btn.getAttribute('data-tab') === tabId) {
       btn.classList.add('active');
+      btn.setAttribute('aria-selected', 'true');
     } else {
       btn.classList.remove('active');
+      btn.setAttribute('aria-selected', 'false');
     }
   });
   
@@ -500,11 +622,13 @@ function toggleSidebar() {
   if (!sidebar) return;
   
   sidebar.classList.toggle('collapsed');
+  state.uiElements.collapsedState = sidebar.classList.contains('collapsed');
   
   // Save preference
-  chrome.storage.local.set({
-    sidebarCollapsed: sidebar.classList.contains('collapsed')
-  });
+  saveUserPreferences();
+  
+  // Adjust GitHub layout
+  adjustGitHubLayout();
 }
 
 /**
@@ -531,6 +655,12 @@ function enhanceFileExplorer() {
     const isDirectory = row.querySelector('[aria-label="Directory"]') !== null;
     const path = fileLink.getAttribute('href')?.split('/').slice(5).join('/') || '';
     
+    // Create checkbox container
+    const checkboxContainer = document.createElement('div');
+    checkboxContainer.style.display = 'inline-flex';
+    checkboxContainer.style.alignItems = 'center';
+    checkboxContainer.style.marginRight = '8px';
+    
     // Create checkbox
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
@@ -538,28 +668,47 @@ function enhanceFileExplorer() {
     checkbox.setAttribute('data-path', path);
     checkbox.setAttribute('data-name', fileName);
     checkbox.setAttribute('data-type', isDirectory ? 'dir' : 'file');
+    checkbox.setAttribute('aria-label', `Select ${fileName}`);
+    
+    // Append checkbox to container
+    checkboxContainer.appendChild(checkbox);
     
     // Create size cell
     const sizeCell = document.createElement('div');
     sizeCell.className = 'gh-enhancer-size-cell';
     sizeCell.innerHTML = '<span class="gh-enhancer-loading-size">...</span>';
     
-    // Insert elements
-    const firstCell = row.firstChild;
-    if (firstCell) {
-      firstCell.prepend(checkbox);
+    // Find insert points
+    // For new GitHub UI - find the first content td
+    const contentCell = row.querySelector('td:first-child');
+    
+    if (contentCell) {
+      // If using the table layout
+      contentCell.style.display = 'flex';
+      contentCell.style.alignItems = 'center';
+      contentCell.prepend(checkboxContainer);
+      row.appendChild(sizeCell);
+    } else {
+      // Fallback for other layouts
+      const firstCell = row.firstChild;
+      if (firstCell) {
+        firstCell.style.display = 'flex';
+        firstCell.style.alignItems = 'center';
+        firstCell.prepend(checkboxContainer);
+      }
+      row.appendChild(sizeCell);
     }
     
     // Add size cell if it's a file row
     if (!isDirectory) {
-      row.appendChild(sizeCell);
       // Fetch and display file size
       fetchFileSize(path).then(size => {
         sizeCell.textContent = formatBytes(size);
+      }).catch(() => {
+        sizeCell.textContent = 'Unknown';
       });
     } else {
       sizeCell.textContent = '--';
-      row.appendChild(sizeCell);
     }
     
     // Store reference and add change event
@@ -595,6 +744,7 @@ function addSelectionHeaderToFileList() {
   // Create selection header
   const selectionHeader = document.createElement('div');
   selectionHeader.className = 'gh-selection-header-main';
+  selectionHeader.style.display = 'none'; // Initially hidden
   selectionHeader.innerHTML = `
     <div class="gh-selection-count">0 files selected</div>
     <div class="gh-selection-actions">
@@ -634,16 +784,22 @@ function updateSelectionStatus() {
     sidebarDownloadBtn.disabled = count === 0;
   }
   
-  // Update main UI selection counter
-  const mainCounter = document.querySelector('.gh-selection-count');
-  if (mainCounter) {
-    mainCounter.textContent = `${count} ${count === 1 ? 'file' : 'files'} selected`;
-  }
-  
-  // Update main UI download button
-  const mainDownloadBtn = document.querySelector('.gh-selection-download-btn');
-  if (mainDownloadBtn) {
-    mainDownloadBtn.disabled = count === 0;
+  // Update main UI selection header
+  const mainHeader = document.querySelector('.gh-selection-header-main');
+  if (mainHeader) {
+    mainHeader.style.display = count > 0 ? 'flex' : 'none';
+    
+    // Update main UI selection counter
+    const mainCounter = mainHeader.querySelector('.gh-selection-count');
+    if (mainCounter) {
+      mainCounter.textContent = `${count} ${count === 1 ? 'file' : 'files'} selected`;
+    }
+    
+    // Update main UI download button
+    const mainDownloadBtn = mainHeader.querySelector('.gh-selection-download-btn');
+    if (mainDownloadBtn) {
+      mainDownloadBtn.disabled = count === 0;
+    }
   }
 }
 
@@ -934,7 +1090,10 @@ function exportReadme(format) {
   }
   
   // Get README raw URL
-  const readmeRawUrl = `${CONFIG.rawContentUrl}/${owner}/${repo}/${branch}/README.md`;
+  const readmeRawUrl = `${CONFIG.rawContentUrl}/${owner}/${repo}/${branch || 'main'}/README.md`;
+  
+  // Show loading toast
+  showToast(`Preparing ${format.toUpperCase()} export...`, 'info');
   
   // Fetch raw content
   fetch(readmeRawUrl)
@@ -965,12 +1124,12 @@ function exportReadme(format) {
           showToast('README.txt downloaded');
           break;
         case 'pdf':
-          // For PDF we need to convert to HTML first
-          exportToPdf(content, `${repo}-README.pdf`);
+          // For PDF export using Blob and download API
+          exportReadmeToPdf(content, `${repo}-README.pdf`);
           break;
         case 'docx':
-          // For DOCX we need to convert to HTML first
-          exportToDocx(content, `${repo}-README.docx`);
+          // For DOCX export using Blob and download API
+          exportReadmeToDocx(content, `${repo}-README.docx`);
           break;
       }
     })
@@ -981,55 +1140,134 @@ function exportReadme(format) {
 }
 
 /**
- * Export markdown to PDF using background script
+ * Export readme to PDF
  */
-function exportToPdf(content, filename) {
-  // Request PDF conversion via background script
-  chrome.runtime.sendMessage({
-    type: 'exportToPdf',
-    content: content,
-    filename: filename
-  }, response => {
-    if (response && response.success) {
-      showToast('PDF export started');
-    } else {
-      showToast('Failed to export as PDF', 'error');
-    }
-  });
+function exportReadmeToPdf(content, filename) {
+  try {
+    // Convert markdown to HTML
+    const html = convertMarkdownToHtml(content);
+    
+    // Create a blob
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    
+    // Download HTML file (since PDF conversion needs server-side processing)
+    chrome.runtime.sendMessage({
+      type: 'download',
+      url: url,
+      filename: filename.replace('.pdf', '.html')
+    }, () => {
+      URL.revokeObjectURL(url);
+      showToast('README exported as HTML (PDF requires conversion)', 'info');
+    });
+  } catch (error) {
+    console.error('PDF export error:', error);
+    showToast('Failed to export as PDF', 'error');
+  }
 }
 
 /**
- * Export markdown to DOCX using background script
+ * Export readme to DOCX
  */
-function exportToDocx(content, filename) {
-  // Request DOCX conversion via background script
-  chrome.runtime.sendMessage({
-    type: 'exportToDocx',
-    content: content,
-    filename: filename
-  }, response => {
-    if (response && response.success) {
-      showToast('DOCX export started');
-    } else {
-      showToast('Failed to export as DOCX', 'error');
-    }
-  });
+function exportReadmeToDocx(content, filename) {
+  try {
+    // Download as markdown since conversion to DOCX requires server-side processing
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    
+    chrome.runtime.sendMessage({
+      type: 'download',
+      url: url,
+      filename: filename.replace('.docx', '.md')
+    }, () => {
+      URL.revokeObjectURL(url);
+      showToast('README exported as Markdown (DOCX requires conversion)', 'info');
+    });
+  } catch (error) {
+    console.error('DOCX export error:', error);
+    showToast('Failed to export as DOCX', 'error');
+  }
 }
 
 /**
- * Download text content
+ * Convert markdown to HTML
  */
-function downloadText(content, filename) {
-  const blob = new Blob([content], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
+function convertMarkdownToHtml(markdown) {
+  // This is a simple markdown to HTML converter
+  let html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>README</title>
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+          line-height: 1.6;
+          max-width: 800px;
+          margin: 0 auto;
+          padding: 20px;
+        }
+        h1, h2, h3, h4, h5, h6 {
+          margin-top: 24px;
+          margin-bottom: 16px;
+          font-weight: 600;
+          line-height: 1.25;
+        }
+        h1 { font-size: 2em; }
+        h2 { font-size: 1.5em; }
+        code {
+          background-color: rgba(27,31,35,.05);
+          padding: 0.2em 0.4em;
+          border-radius: 3px;
+          font-family: SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace;
+          font-size: 85%;
+        }
+        pre {
+          background-color: #f6f8fa;
+          padding: 16px;
+          border-radius: 6px;
+          overflow: auto;
+        }
+        pre code {
+          background-color: transparent;
+          padding: 0;
+        }
+        a {
+          color: #0366d6;
+          text-decoration: none;
+        }
+        a:hover {
+          text-decoration: underline;
+        }
+      </style>
+    </head>
+    <body>
+  `;
   
-  chrome.runtime.sendMessage({
-    type: 'download',
-    url: url,
-    filename: filename
-  }, () => {
-    URL.revokeObjectURL(url); // Clean up
-  });
+  // Basic conversion (very simplified)
+  let convertedContent = markdown
+    // Headers
+    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+    // Bold
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    // Code blocks
+    .replace(/```([^`]*?)```/g, '<pre><code>$1</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Lists
+    .replace(/^\s*-\s(.*$)/gm, '<li>$1</li>')
+    // Paragraphs
+    .replace(/^(?!<[hl]|<li|<pre)(.+)/gm, '<p>$1</p>');
+  
+  html += convertedContent + '</body></html>';
+  return html;
 }
 
 /**
@@ -1054,14 +1292,30 @@ function downloadSelectedFiles() {
     type: 'createZip',
     owner: owner,
     repo: repo,
-    branch: branch,
+    branch: branch || 'main',
     paths: Array.from(state.uiElements.selectedFiles)
   }, response => {
     if (response && response.success) {
       showToast('Download started');
     } else {
-      showToast('Failed to create ZIP file', 'error');
+      showToast('Files are being downloaded individually', 'info');
     }
+  });
+}
+
+/**
+ * Download text content
+ */
+function downloadText(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  
+  chrome.runtime.sendMessage({
+    type: 'download',
+    url: url,
+    filename: filename
+  }, () => {
+    URL.revokeObjectURL(url);
   });
 }
 
@@ -1169,6 +1423,7 @@ function showToast(message, type = 'info') {
   // Create toast
   const toast = document.createElement('div');
   toast.className = `gh-enhancer-toast ${type}`;
+  toast.setAttribute('role', 'alert');
   toast.textContent = message;
   
   // Add to body
@@ -1182,6 +1437,9 @@ function showToast(message, type = 'info') {
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
   }, 3000);
+  
+  // Store reference
+  state.uiElements.toast = toast;
 }
 
 /**
@@ -1218,6 +1476,10 @@ function observePageChanges() {
   });
   
   themeObserver.observe(document.documentElement, { attributes: true });
+  if (document.body.hasAttribute('data-color-mode')) {
+    themeObserver.observe(document.body, { attributes: true });
+  }
+  
   state.observers.push(themeObserver);
 }
 
@@ -1240,7 +1502,12 @@ function onLocationChange() {
   
   // Show sidebar if it exists
   if (state.uiElements.sidebar) {
-    state.uiElements.sidebar.classList.remove('hidden');
+    // Apply saved state
+    if (state.uiElements.hiddenState) {
+      state.uiElements.sidebar.classList.add('hidden');
+    } else {
+      state.uiElements.sidebar.classList.remove('hidden');
+    }
     
     // Reset to overview tab
     switchTab('overview');
@@ -1255,6 +1522,9 @@ function onLocationChange() {
     if (isFileExplorerPage()) {
       enhanceFileExplorer();
     }
+    
+    // Adjust layout
+    adjustGitHubLayout();
   }, CONFIG.refreshInterval);
 }
 
@@ -1265,8 +1535,10 @@ function updateTheme() {
   const sidebar = state.uiElements.sidebar;
   if (!sidebar) return;
   
-  const colorMode = document.documentElement.getAttribute('data-color-mode') || 'auto';
-  const theme = document.documentElement.getAttribute('data-theme') || '';
+  const colorMode = document.documentElement.getAttribute('data-color-mode') || 
+                   document.body.getAttribute('data-color-mode') || 'auto';
+  const theme = document.documentElement.getAttribute('data-theme') || 
+               document.body.getAttribute('data-theme') || '';
   
   sidebar.setAttribute('data-color-mode', colorMode);
   sidebar.setAttribute('data-theme', theme);
@@ -1282,7 +1554,6 @@ async function fetchRepoData() {
   if (!owner || !repo) return null;
   
   // Check cache first
-  const cacheKey = `repo:${owner}/${repo}`;
   if (state.cache.repoStats) return state.cache.repoStats;
   
   try {
@@ -1347,7 +1618,7 @@ async function fetchFileSize(filePath) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({
         type: 'fetchRepoData',
-        url: `${CONFIG.apiBaseUrl}/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`
+        url: `${CONFIG.apiBaseUrl}/repos/${owner}/${repo}/contents/${filePath}?ref=${branch || 'main'}`
       }, response => {
         if (response?.success && response?.data?.size) {
           // Cache the data

@@ -4,7 +4,7 @@
  * Handles API requests, authentication, and download operations
  */
 
-// GitHub API credentials (replace with yours or use auth)
+// GitHub API credentials
 const GITHUB_API = {
   baseUrl: 'https://api.github.com',
   headers: {
@@ -40,12 +40,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         url: message.url,
         filename: message.filename,
         saveAs: false
+      }, (downloadId) => {
+        if (chrome.runtime.lastError) {
+          respond({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          respond({ success: true, downloadId });
+        }
       });
-      respond({ success: true });
-      return false;
+      return true;
 
     case 'createZip':
-      createAndDownloadZip(message.owner, message.repo, message.branch, message.paths)
+      downloadMultipleFiles(message.owner, message.repo, message.branch, message.paths)
         .then(() => respond({ success: true }))
         .catch(error => {
           console.error('GitHub Enhancer: ZIP Error', error);
@@ -54,19 +59,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'exportToPdf':
-      exportMarkdownToPdf(message.content, message.filename)
-        .then(() => respond({ success: true }))
-        .catch(error => {
-          console.error('GitHub Enhancer: PDF Export Error', error);
-          respond({ success: false, error: error.message });
-        });
-      return true;
-
     case 'exportToDocx':
-      exportMarkdownToDocx(message.content, message.filename)
+      // These functions now don't use URL.createObjectURL, which was causing issues
+      const fileType = message.type === 'exportToPdf' ? 'pdf' : 'docx';
+      exportToFormat(message.content, message.filename, fileType)
         .then(() => respond({ success: true }))
         .catch(error => {
-          console.error('GitHub Enhancer: DOCX Export Error', error);
+          console.error(`GitHub Enhancer: ${fileType.toUpperCase()} Export Error`, error);
           respond({ success: false, error: error.message });
         });
       return true;
@@ -99,83 +98,92 @@ async function fetchGitHubData(url) {
 }
 
 /**
- * Create a ZIP file from selected repository files and trigger download
+ * Download multiple files from a repository
  */
-async function createAndDownloadZip(owner, repo, branch, paths) {
-  // This would normally use JSZip library
-  // For this implementation we'll just trigger individual downloads
-  
+async function downloadMultipleFiles(owner, repo, branch, paths) {
   try {
     // For each path, fetch the raw content and download
-    for (const path of paths) {
+    const downloads = paths.map(path => {
       const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
       const filename = path.split('/').pop();
       
-      chrome.downloads.download({
-        url: url,
-        filename: `${owner}_${repo}_${filename}`,
-        saveAs: false
+      return new Promise((resolve, reject) => {
+        chrome.downloads.download({
+          url: url,
+          filename: `${owner}_${repo}_${filename}`,
+          saveAs: false
+        }, (downloadId) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(downloadId);
+          }
+        });
       });
+    });
+    
+    await Promise.all(downloads);
+    return { success: true };
+  } catch (error) {
+    console.error('GitHub Enhancer: Multiple files download error', error);
+    throw error;
+  }
+}
+
+/**
+ * Export content to various formats
+ */
+async function exportToFormat(content, filename, format) {
+  try {
+    let blob, mimeType;
+    
+    switch (format) {
+      case 'pdf':
+        // For PDF, we'll export as HTML since browser extension can't easily create PDFs
+        const html = convertMarkdownToHtml(content);
+        blob = new Blob([html], { type: 'text/html' });
+        mimeType = 'text/html';
+        filename = filename.replace('.pdf', '.html');
+        break;
+        
+      case 'docx':
+        // For DOCX, we'll just export the Markdown
+        blob = new Blob([content], { type: 'text/markdown' });
+        mimeType = 'text/markdown';
+        filename = filename.replace('.docx', '.md');
+        break;
+        
+      default:
+        blob = new Blob([content], { type: 'text/plain' });
+        mimeType = 'text/plain';
     }
     
-    return { success: true };
-  } catch (error) {
-    console.error('GitHub Enhancer: ZIP creation error', error);
-    throw error;
-  }
-}
-
-/**
- * Convert markdown to PDF and download
- */
-async function exportMarkdownToPdf(markdown, filename) {
-  try {
-    // In a real implementation, this would use a library to convert markdown to PDF
-    // For demonstration purposes, we'll generate a simple PDF with minimal styling
+    // Create a data URL directly (not using createObjectURL which was causing issues)
+    const reader = new FileReader();
     
-    // Convert markdown to HTML (basic implementation)
-    const html = convertMarkdownToHtml(markdown);
-    
-    // Create a data URL for the HTML
-    const htmlBlob = new Blob([html], { type: 'text/html' });
-    const htmlUrl = URL.createObjectURL(htmlBlob);
-    
-    // Download as HTML (in real implementation, would convert to PDF)
-    chrome.downloads.download({
-      url: htmlUrl,
-      filename: filename.replace('.pdf', '.html'),
-      saveAs: false
+    return new Promise((resolve, reject) => {
+      reader.onloadend = function() {
+        chrome.downloads.download({
+          url: reader.result,
+          filename: filename,
+          saveAs: false
+        }, (downloadId) => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(downloadId);
+          }
+        });
+      };
+      
+      reader.onerror = function() {
+        reject(new Error('Error reading file data'));
+      };
+      
+      reader.readAsDataURL(blob);
     });
-    
-    return { success: true };
   } catch (error) {
-    console.error('GitHub Enhancer: PDF export error', error);
-    throw error;
-  }
-}
-
-/**
- * Convert markdown to DOCX and download
- */
-async function exportMarkdownToDocx(markdown, filename) {
-  try {
-    // In a real implementation, this would use a library to convert markdown to DOCX
-    // For demonstration purposes, we'll just save the markdown
-    
-    // Create a data URL for the markdown
-    const mdBlob = new Blob([markdown], { type: 'text/markdown' });
-    const mdUrl = URL.createObjectURL(mdBlob);
-    
-    // Download as markdown (in real implementation, would convert to DOCX)
-    chrome.downloads.download({
-      url: mdUrl,
-      filename: filename.replace('.docx', '.md'),
-      saveAs: false
-    });
-    
-    return { success: true };
-  } catch (error) {
-    console.error('GitHub Enhancer: DOCX export error', error);
+    console.error(`GitHub Enhancer: ${format} export error`, error);
     throw error;
   }
 }
@@ -266,4 +274,23 @@ function convertMarkdownToHtml(markdown) {
 // Initialize extension
 chrome.runtime.onInstalled.addListener(() => {
   console.log('GitHub Enhancer Pro installed successfully!');
+  
+  // Set default preferences
+  chrome.storage.local.get(['sidebarCollapsed', 'sidebarHidden'], (result) => {
+    if (result.sidebarCollapsed === undefined) {
+      chrome.storage.local.set({ sidebarCollapsed: false });
+    }
+    if (result.sidebarHidden === undefined) {
+      chrome.storage.local.set({ sidebarHidden: false });
+    }
+  });
+});
+
+// Handle tab updates to reinitialize content script if needed
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && tab.url.includes('github.com')) {
+    chrome.tabs.sendMessage(tabId, { type: 'tabUpdated' }).catch(() => {
+      // Ignore errors if content script is not ready
+    });
+  }
 });
